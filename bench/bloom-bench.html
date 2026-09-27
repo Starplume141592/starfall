@@ -1,0 +1,314 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Canvas2D bloom benchmark v2</title>
+<style>html,body{margin:0;background:#111;color:#ccc;font:12px monospace}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="view" width="1280" height="720"></canvas>
+<pre id="log">idle — call window.__runBench()</pre>
+<script>
+(function () {
+  const W = 1280, H = 720;
+  const view = document.getElementById('view');
+  const vctx = view.getContext('2d');
+  const logEl = document.getElementById('log');
+
+  // ---------- environment ----------
+  let gpu = 'unknown';
+  try {
+    const tc = document.createElement('canvas');
+    const gl = tc.getContext('webgl');
+    if (gl) {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    }
+  } catch (e) { gpu = 'err:' + e.message; }
+
+  let filterSupported = false, filterEcho = 'n/a';
+  try {
+    vctx.filter = 'blur(3px) brightness(1.2) contrast(3)';
+    filterEcho = vctx.filter;
+    filterSupported = (vctx.filter === 'blur(3px) brightness(1.2) contrast(3)');
+    vctx.filter = 'none';
+  } catch (e) { filterEcho = 'throw:' + e.message; }
+
+  // ---------- synthetic scene: 450 glow sprites on near-black, like a neon shooter ----------
+  const src = document.createElement('canvas'); src.width = W; src.height = H;
+  (function () {
+    const s = src.getContext('2d');
+    s.fillStyle = '#04060a'; s.fillRect(0, 0, W, H);
+    s.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 450; i++) {
+      const x = Math.random() * W, y = Math.random() * H, r = 3 + Math.random() * 14;
+      const hue = 190 + Math.random() * 150;
+      const g = s.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'hsla(' + hue + ',100%,72%,0.95)');
+      g.addColorStop(0.45, 'hsla(' + hue + ',100%,55%,0.35)');
+      g.addColorStop(1, 'hsla(' + hue + ',100%,50%,0)');
+      s.fillStyle = g; s.beginPath(); s.arc(x, y, r, 0, 6.2832); s.fill();
+    }
+    s.globalCompositeOperation = 'source-over';
+  })();
+
+  // ---------- scratch layers ----------
+  const pool = {};
+  function cv(w, h) {
+    const k = w + 'x' + h;
+    if (!pool[k]) { const c = document.createElement('canvas'); c.width = w; c.height = h; pool[k] = c; }
+    return pool[k];
+  }
+  function octx(c) { return c.getContext('2d'); }
+  function reset(x, w, h) {
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    x.globalCompositeOperation = 'source-over';
+    x.globalAlpha = 1;
+    x.filter = 'none';
+    x.clearRect(0, 0, w, h);
+  }
+  // per-canvas flush: reading a canvas forces that canvas' queue to drain
+  function flush(c) { try { c.getContext('2d').getImageData(0, 0, 1, 1); } catch (e) { } }
+
+  // a 1x1 canvas used as a cheap GPU sync point (forces the shared command buffer to drain)
+  const tinyC = document.createElement('canvas'); tinyC.width = 2; tinyC.height = 2;
+  let flushTarget = null;   // null => flush the destination canvas itself
+  let DEF_ITERS = 30, DEF_INNER = 3;
+
+  function timeIt(name, dest, fn, iters, inner) {
+    iters = iters || DEF_ITERS; inner = inner || DEF_INNER;
+    const ft = flushTarget || dest;
+    for (let i = 0; i < 5; i++) fn();
+    flush(ft);
+    const t = [];
+    for (let i = 0; i < iters; i++) {
+      const t0 = performance.now();
+      for (let j = 0; j < inner; j++) fn();
+      flush(ft);
+      t.push((performance.now() - t0) / inner);
+    }
+    t.sort(function (a, b) { return a - b; });
+    const med = t[t.length >> 1];
+    const mad = t.map(function (v) { return Math.abs(v - med); }).sort(function (a, b) { return a - b; })[t.length >> 1];
+    return { name: name, med: +med.toFixed(3), mad: +mad.toFixed(3), min: +t[0].toFixed(3), p90: +t[Math.floor(t.length * 0.9)].toFixed(3) };
+  }
+
+  // ---------- individual passes ----------
+  function p_blit() { reset(vctx, W, H); vctx.drawImage(src, 0, 0); }
+
+  function p_blurFull(r) { reset(vctx, W, H); vctx.filter = 'blur(' + r + 'px)'; vctx.drawImage(src, 0, 0); vctx.filter = 'none'; }
+
+  function p_downBlur(div, r) {
+    const dw = (W / div) | 0, dh = (H / div) | 0, c = cv(dw, dh), x = octx(c);
+    reset(x, dw, dh);
+    if (filterSupported) x.filter = 'blur(' + r + 'px)';
+    x.drawImage(src, 0, 0, dw, dh);
+    x.filter = 'none';
+    return c;
+  }
+  function p_downPlain(div) {
+    const dw = (W / div) | 0, dh = (H / div) | 0, c = cv(dw, dh), x = octx(c);
+    reset(x, dw, dh);
+    x.drawImage(src, 0, 0, dw, dh);
+    return c;
+  }
+  function p_bright(div, b, ct) {
+    const dw = (W / div) | 0, dh = (H / div) | 0, c = cv(dw, dh), x = octx(c);
+    reset(x, dw, dh);
+    if (filterSupported) x.filter = 'brightness(' + b + ') contrast(' + ct + ')';
+    x.drawImage(src, 0, 0, dw, dh);
+    x.filter = 'none';
+    return c;
+  }
+  function p_add(div, alpha) {
+    const dw = (W / div) | 0, dh = (H / div) | 0, c = cv(dw, dh);
+    reset(vctx, W, H);
+    vctx.globalCompositeOperation = 'lighter';
+    vctx.globalAlpha = alpha;
+    vctx.drawImage(c, 0, 0, dw, dh, 0, 0, W, H);
+    vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ---------- full pipelines ----------
+  function bloomInto(div, r, b, ct, alpha, dual) {
+    const dw = (W / div) | 0, dh = (H / div) | 0;
+    const a = cv(dw, dh), ax = octx(a);
+    reset(ax, dw, dh);
+    if (filterSupported) ax.filter = 'brightness(' + b + ') contrast(' + ct + ')';
+    ax.drawImage(src, 0, 0, dw, dh);
+    ax.filter = 'none';
+
+    const bb = cv(dw, dh), bx = octx(bb);
+    reset(bx, dw, dh);
+    if (filterSupported) bx.filter = 'blur(' + r + 'px)';
+    bx.drawImage(a, 0, 0, dw, dh);
+    bx.filter = 'none';
+
+    let out = bb;
+    if (dual) {
+      reset(ax, dw, dh);
+      if (filterSupported) ax.filter = 'blur(' + r + 'px)';
+      ax.drawImage(bb, 0, 0, dw, dh);
+      ax.filter = 'none';
+      out = a;
+    }
+    reset(vctx, W, H);
+    vctx.drawImage(src, 0, 0);                 // the (already rendered) game frame
+    vctx.globalCompositeOperation = 'lighter';
+    vctx.globalAlpha = alpha;
+    vctx.drawImage(out, 0, 0, dw, dh, 0, 0, W, H);
+    vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+  }
+
+  // realistic frame: draw 450 glow sprites, then optional post
+  function drawScene() {
+    reset(vctx, W, H);
+    vctx.fillStyle = '#04060a'; vctx.fillRect(0, 0, W, H);
+    vctx.globalCompositeOperation = 'lighter';
+    vctx.drawImage(src, 0, 0);   // stand-in for the unit draw calls (same pixel load)
+    vctx.globalCompositeOperation = 'source-over';
+  }
+
+  function run(opts) {
+    opts = opts || {};
+    flushTarget = opts.tiny ? tinyC : null;
+    DEF_ITERS = opts.iters || 30;
+    DEF_INNER = opts.inner || 3;
+    const res = [];
+    const push = function (r) { res.push(r); };
+
+    // calibration: what does one flush round-trip cost when nothing was drawn?
+    push(Object.assign(timeIt('CAL. flush overhead per iteration (no draw)', view, function () { }, 20, DEF_INNER), { cal: true }));
+
+    push(timeIt('A. blit 1280x720 into view, no filter', view, p_blit));
+    push(timeIt('B. frame = clear + blit (no post at all)', view, drawScene));
+
+    if (filterSupported) {
+      push(timeIt('C. blur(4px)  full-res src -> view', view, function () { p_blurFull(4); }));
+      push(timeIt('D. blur(8px)  full-res src -> view', view, function () { p_blurFull(8); }));
+      push(timeIt('E. blur(16px) full-res src -> view', view, function () { p_blurFull(16); }));
+      push(timeIt('F. blur(32px) full-res src -> view', view, function () { p_blurFull(32); }));
+
+      const c2 = cv(W / 2 | 0, H / 2 | 0), c4 = cv(W / 4 | 0, H / 4 | 0), c8 = cv(W / 8 | 0, H / 8 | 0), c16 = cv(W / 16 | 0, H / 16 | 0);
+      push(timeIt('G. downscale+blur(4px) -> 1/2 layer', c2, function () { p_downBlur(2, 4); }));
+      push(timeIt('H. downscale+blur(2px) -> 1/4 layer', c4, function () { p_downBlur(4, 2); }));
+      push(timeIt('I. downscale+blur(1px) -> 1/8 layer', c8, function () { p_downBlur(8, 1); }));
+      push(timeIt('J. downscale+blur(0.5px) -> 1/16 layer', c16, function () { p_downBlur(16, 0.5); }));
+      push(timeIt('K. downscale plain (no filter) -> 1/4 layer', c4, function () { p_downPlain(4); }));
+      push(timeIt('L. downscale plain (no filter) -> 1/2 layer', c2, function () { p_downPlain(2); }));
+
+      push(timeIt('M. brightpass brightness(2) contrast(4) -> 1/4', c4, function () { p_bright(4, 2, 4); }));
+      push(timeIt('N. brightpass brightness(2) contrast(4) -> 1/2', c2, function () { p_bright(2, 2, 4); }));
+      push(timeIt('O. brightpass brightness(1.6) contrast(2.2) -> 1/4', c4, function () { p_bright(4, 1.6, 2.2); }));
+
+      push(timeIt('P. additive composite 1/4 layer -> view (lighter a=.85)', view, function () { p_add(4, 0.85); }));
+      push(timeIt('Q. additive composite 1/2 layer -> view (lighter a=.85)', view, function () { p_add(2, 0.85); }));
+      push(timeIt('R. additive composite 1/8 layer -> view (lighter a=.85)', view, function () { p_add(8, 0.85); }));
+      push(timeIt('S. additive composite 1/16 layer -> view (lighter a=.85)', view, function () { p_add(16, 0.85); }));
+
+      push(timeIt('T. FULL BLOOM 1/2  (bp r4 + add)', view, function () { bloomInto(2, 4, 2, 4, 0.85, false); }, 30, 3));
+      push(timeIt('U. FULL BLOOM 1/4  (bp r2 + add)', view, function () { bloomInto(4, 2, 2, 4, 0.85, false); }, 30, 3));
+      push(timeIt('V. FULL BLOOM 1/8  (bp r1 + add)', view, function () { bloomInto(8, 1, 2, 4, 0.85, false); }, 30, 3));
+      push(timeIt('W. FULL BLOOM 1/16 (bp r0.5 + add)', view, function () { bloomInto(16, 0.5, 2, 4, 0.85, false); }, 30, 3));
+      push(timeIt('X. FULL BLOOM 1/4 dual-blur (2x blur r1.4)', view, function () { bloomInto(4, 1.4, 2, 4, 0.85, true); }, 30, 3));
+
+      push(timeIt('Y. frame WITHOUT post (scene+blit)', view, function () { drawScene(); }, 30, 3));
+      push(timeIt('Z. frame WITH 1/4 bloom on top of scene', view, function () { drawScene(); bloomInto(4, 2, 2, 4, 0.85, false); }, 30, 3));
+      push(timeIt('Z2. frame WITH 1/8 bloom on top of scene', view, function () { drawScene(); bloomInto(8, 1, 2, 4, 0.85, false); }, 30, 3));
+    }
+
+    // ---- other screen-space effects (unit costs, all into view) ----
+    push(timeIt('SS1. full-res copy view -> offscreen', view, function () {
+      const c = cv(W, H), x = octx(c); reset(x, W, H); x.drawImage(view, 0, 0);
+    }));
+    push(timeIt('SS2. chromatic aberration: copy + 2 offset lighter passes', view, function () {
+      const c = cv(W, H), x = octx(c);
+      reset(x, W, H); x.drawImage(view, 0, 0);
+      reset(vctx, W, H);
+      vctx.globalCompositeOperation = 'lighter';
+      vctx.globalAlpha = 0.12;
+      vctx.drawImage(c, 1.5, 0, W, H, 0, 0, W, H);
+      vctx.drawImage(c, -1.5, 0, W, H, 0, 0, W, H);
+      vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+    }));
+    push(timeIt('SS3. additive bloom-ish halo: 1 full-res lighter blit a=.08', view, function () {
+      reset(vctx, W, H);
+      vctx.globalCompositeOperation = 'lighter'; vctx.globalAlpha = 0.08;
+      vctx.drawImage(src, 1.5, 0, W, H, 0, 0, W, H);
+      vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+    }));
+    push(timeIt('SS4. grade wash: 1 full-res multiply fillRect', view, function () {
+      reset(vctx, W, H); vctx.drawImage(src, 0, 0);
+      vctx.globalCompositeOperation = 'multiply'; vctx.globalAlpha = 1;
+      vctx.fillStyle = '#8080a0'; vctx.fillRect(0, 0, W, H);
+      vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+    }));
+
+    const vig = cv(W, H);
+    (function () {
+      const g = octx(vig).createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.8);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(1, 'rgba(0,0,0,1)');
+      const x = octx(vig); x.fillStyle = g; x.fillRect(0, 0, W, H);
+    })();
+    push(timeIt('SS5. vignette: multiply drawImage of prebuilt sprite', view, function () {
+      reset(vctx, W, H); vctx.drawImage(src, 0, 0);
+      vctx.globalCompositeOperation = 'multiply'; vctx.globalAlpha = 0.75;
+      vctx.drawImage(vig, 0, 0);
+      vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+    }));
+
+    const sl = document.createElement('canvas'); sl.width = 4; sl.height = 4;
+    (function () { const x = sl.getContext('2d'); x.fillStyle = 'rgba(0,0,0,0.4)'; x.fillRect(0, 0, 4, 2); })();
+    const slPat = vctx.createPattern(sl, 'repeat');
+    push(timeIt('SS6. scanlines: full-res pattern fillRect a=.5', view, function () {
+      reset(vctx, W, H); vctx.drawImage(src, 0, 0);
+      vctx.globalAlpha = 0.5; vctx.fillStyle = slPat; vctx.fillRect(0, 0, W, H);
+      vctx.globalAlpha = 1; vctx.fillStyle = '#000';
+    }));
+
+    const nc = document.createElement('canvas'); nc.width = 256; nc.height = 256;
+    (function () {
+      const x = nc.getContext('2d'), id = x.createImageData(256, 256);
+      for (let i = 0; i < id.data.length; i += 4) {
+        const v = 110 + Math.random() * 90;
+        id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 255;
+      }
+      x.putImageData(id, 0, 0);
+    })();
+    const nPat = vctx.createPattern(nc, 'repeat');
+    push(timeIt('SS7. grain: full-res pattern fillRect overlay a=.06', view, function () {
+      reset(vctx, W, H); vctx.drawImage(src, 0, 0);
+      vctx.globalCompositeOperation = 'overlay'; vctx.globalAlpha = 0.06;
+      vctx.fillStyle = nPat; vctx.fillRect(0, 0, W, H);
+      vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+    }));
+
+    push(timeIt('SS8. 4-frame radial-blur-ish zoom (4 lighter blits, 2% zoom)', view, function () {
+      reset(vctx, W, H);
+      vctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 4; i++) {
+        const s = 1 + i * 0.02;
+        const dw = W * s, dh = H * s;
+        vctx.globalAlpha = 0.22;
+        vctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      }
+      vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+    }));
+
+    const out = {
+      env: { ua: navigator.userAgent, gpu: gpu, dpr: window.devicePixelRatio, filterSupported: filterSupported, filterEcho: filterEcho },
+      mode: { tinyFlush: !!opts.tiny, iters: DEF_ITERS, inner: DEF_INNER },
+      results: res
+    };
+    window.__BENCH = out;
+    (window.__RUNS = window.__RUNS || []).push(out);
+    logEl.textContent = JSON.stringify(out, null, 1);
+    return out;
+  }
+
+  window.__runBench = run;
+})();
+</script>
+</body>
+</html>

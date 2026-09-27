@@ -1,0 +1,482 @@
+/* ============================================================
+   星陨 · 界面样式（军用终端风）
+   布局：body 只负责全屏底色，一切内容装在 #stage 里；
+        #stage 是固定 16:9 的游戏窗口，尺寸由 JS 按窗口等比缩放后居中。
+   约定：#hud / #overlay 都铺满 #stage，DOM 结构由 index.html 冻结。
+   ============================================================ */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #05070a radial-gradient(circle at 50% 50%, #0b1018 0%, #05070a 70%);
+  color: #8fb0cf;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Microsoft YaHei", monospace;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+}
+
+/* ---------- 舞台：固定逻辑分辨率，等比缩放居中（四周留黑边） ---------- */
+#stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  outline: 1px solid rgba(88, 166, 255, 0.22);
+  box-shadow: 0 0 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+/* 暗角：交给合成器画（canvas 里省掉一趟全屏填充）。层级压在 HUD 之下、扫描线之上 */
+#vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  transition: opacity 0.3s;
+  background: radial-gradient(ellipse at 50% 50%,
+              rgba(0, 0, 0, 0) 34%, rgba(0, 0, 0, 0.34) 74%, rgba(0, 0, 0, 0.62) 100%);
+}
+/* 扫描线 */
+#stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 205;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(88, 166, 255, 0.05),
+    rgba(88, 166, 255, 0.05) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+/* 四周暗角 */
+#stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 210;
+  pointer-events: none;
+  box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.75);
+}
+
+canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+/* ---------- HUD ---------- */
+#hud {
+  position: absolute;
+  inset: 0;
+  z-index: 220;
+  padding: 14px;
+  pointer-events: none;
+}
+
+#topbar {
+  position: relative;
+  width: 296px;
+  padding: 10px 12px 9px;
+  background: linear-gradient(180deg, rgba(10, 16, 24, 0.82), rgba(7, 10, 14, 0.72));
+  border: 1px solid rgba(88, 166, 255, 0.28);
+}
+/* 左上 / 右上直角括号 */
+#topbar::before,
+#topbar::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 0 solid #58a6ff;
+}
+#topbar::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+#topbar::after { top: -1px; right: -1px; border-top-width: 2px; border-right-width: 2px; }
+
+/* 单条资源读数：标签 + 槽 + 数值 */
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.bar-row .tag {
+  width: 26px;
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: #5f89b3;
+}
+.track {
+  position: relative;
+  flex: 1;
+  height: 9px;
+  background: #0a0f16;
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  overflow: hidden;
+}
+.track.slim { height: 6px; }
+/* 槽内刻度 */
+.track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(5, 7, 10, 0.85) 0,
+    rgba(5, 7, 10, 0.85) 1px,
+    transparent 1px,
+    transparent 10%
+  );
+}
+.fill {
+  position: relative;              /* 让 .fill::after 的包含块落在填充条自身，游标才会跟着填充头走 */
+  height: 100%;
+  width: 0%;
+  transition: width 0.1s linear;
+}
+/* 填充头部的亮边，像读数游标 */
+.fill::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.85);
+}
+#hpFill { background: linear-gradient(90deg, #7f1d24, #e5484d 60%, #ff7b72); }
+#xpFill { background: linear-gradient(90deg, #1e40af, #3b82f6 55%, #22d3ee); }
+.bar-row .val {
+  flex: none;
+  min-width: 62px;
+  text-align: right;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #7ea6cc;
+}
+
+/* 遥测读数行 */
+#stats {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding-top: 7px;
+  margin-top: 2px;
+  border-top: 1px solid rgba(88, 166, 255, 0.14);
+  font-size: 11px;
+}
+#stats::after {
+  content: "";
+  position: absolute;
+  right: -13px;
+  bottom: -10px;
+  width: 10px;
+  height: 10px;
+  border: 0 solid #58a6ff;
+  border-bottom-width: 2px;
+  border-right-width: 2px;
+}
+#stats span { display: flex; gap: 5px; align-items: baseline; }
+#stats i { font-style: normal; font-size: 10px; letter-spacing: 0.1em; color: #4f7799; }
+#stats b { font-weight: 700; color: #d6e8ff; font-variant-numeric: tabular-nums; }
+/* 下一波是事件波时高亮告警 */
+#stats b.warn { color: #FFB020; text-shadow: 0 0 12px rgba(255, 176, 32, 0.55); }
+
+/* 连击 */
+#combo {
+  position: absolute;
+  top: 20px;
+  right: 22px;
+  text-align: right;
+  font-size: 30px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  color: #F0E442;
+  text-shadow: 0 0 22px rgba(240, 228, 66, 0.65);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+#combo::after {
+  content: "COMBO";
+  display: block;
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: 0.42em;
+  color: rgba(240, 228, 66, 0.6);
+}
+#combo.show { opacity: 1; }
+
+/* ---------- 面板（装备终端 / 结算） ---------- */
+#overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 50%, rgba(7, 10, 16, 0.72), rgba(3, 5, 8, 0.9));
+}
+#overlay.show { display: flex; }
+
+#panel {
+  position: relative;
+  min-width: 640px;
+  max-width: 86%;
+  padding: 24px 28px 26px;
+  background: linear-gradient(180deg, rgba(12, 18, 28, 0.97), rgba(7, 10, 15, 0.97));
+  border: 1px solid #27455f;
+  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.1), 0 30px 70px rgba(0, 0, 0, 0.75);
+}
+#panel::before,
+#panel::after,
+#panel > div::before,
+#panel > div::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 0 solid #58a6ff;
+}
+#panel::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+#panel::after { top: -1px; right: -1px; border-top-width: 2px; border-right-width: 2px; }
+#panel > div::before { bottom: -1px; left: -1px; border-bottom-width: 2px; border-left-width: 2px; }
+#panel > div::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+
+#panel h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #dce9ff;
+}
+#panel h2::after {
+  content: "";
+  display: block;
+  height: 1px;
+  margin-top: 12px;
+  background: linear-gradient(90deg, rgba(88, 166, 255, 0.85), rgba(88, 166, 255, 0.05));
+}
+#panel p.sub {
+  margin: 12px 0 18px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #6b8fb5;
+}
+#panel p.sub.best { color: #F0E442; margin-top: -10px; }
+#panel p.sub.build { color: #6b8fb5; margin-top: -8px; font-size: 10px; max-width: 560px; margin-left: auto; margin-right: auto; }
+
+/* ---------- 三选一卡片 ---------- */
+#cards { display: flex; gap: 14px; }
+
+.card {
+  position: relative;
+  flex: 1;
+  min-height: 168px;
+  padding: 16px 14px 16px;
+  background: linear-gradient(180deg, rgba(20, 29, 43, 0.92), rgba(9, 13, 19, 0.92));
+  border: 1px solid #24425f;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s;
+}
+.card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: #2f5f8f;
+  transition: background 0.15s;
+}
+.card::after {
+  content: "[" attr(data-key) "]";
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #4d7ba8;
+}
+.card:hover {
+  border-color: #58a6ff;
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 26px rgba(88, 166, 255, 0.12), 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.card:hover::before { background: #58a6ff; }
+.card:active {
+  transform: translateY(0) scale(0.985);
+  border-color: #22d3ee;
+}
+.card .ic { width: 26px; height: 26px; margin-bottom: 12px; }
+.card .ic .ico { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 5px currentColor); opacity: 0.95; }
+.card .nm { font-size: 16px; letter-spacing: 0.06em; color: #eaf2ff; }
+.card .lv {
+  display: inline-block;
+  margin: 7px 0 11px;
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: #9ec9ff;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.26);
+}
+/* 射程条：武器射程是选装备时最该一眼看清的数字，给它一条对照条 */
+.card .rg { display: flex; align-items: center; gap: 7px; margin: -4px 0 10px; }
+.card .rg::before {
+  content: "";
+  order: 2;
+  flex: 1;
+  height: 3px;
+  background: rgba(88, 166, 255, 0.12);
+}
+.card .rg i {
+  order: 1;
+  height: 3px;
+  min-width: 3px;
+  max-width: 96px;
+  border-radius: 2px;
+  box-shadow: 0 0 8px currentColor;
+}
+.card .rg b {
+  order: 3;
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #bfd8f2;
+  font-variant-numeric: tabular-nums;
+}
+.card .ds { font-size: 12px; line-height: 1.55; color: #8fb0cf; }
+
+/* 已拥有武器/模组一览（一眼看清构筑） */
+#loadout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(88, 166, 255, 0.14);
+}
+#loadout span {
+  position: relative;
+  width: 17px;
+  height: 17px;
+  opacity: 0.92;
+}
+#loadout span .ico { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 4px currentColor); }
+#loadout span i {
+  font-style: normal;
+  font-size: 9px;
+  color: #9ec9ff;
+  margin-left: 1px;
+  vertical-align: sub;
+}
+#loadout span.mod { filter: drop-shadow(0 0 6px rgba(240, 228, 66, 0.7)); }
+
+/* ---------- 超频跃迁（金色强调，与普通装备终端区分） ---------- */
+#panel h2.jump { color: #F0E442; letter-spacing: 0.22em; }
+#panel h2.jump::after {
+  background: linear-gradient(90deg, rgba(240, 228, 66, 0.9), rgba(240, 228, 66, 0.05));
+}
+.card.jump { border-color: #6b5320; }
+.card.jump::before { background: #F0E442; }
+.card.jump .lv {
+  color: #F0E442;
+  background: rgba(240, 228, 66, 0.1);
+  border-color: rgba(240, 228, 66, 0.35);
+}
+.card.jump:hover {
+  border-color: #F0E442;
+  box-shadow: inset 0 0 26px rgba(240, 228, 66, 0.14), 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.card.jump:hover::before { background: #ffe8a8; }
+
+/* ---------- 结算 ---------- */
+#big {
+  margin: 6px 0 14px;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #ff7b72;
+  text-shadow: 0 0 34px rgba(255, 90, 90, 0.45);
+  text-align: center;
+}
+.btn {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 10px 26px;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  color: #9ec9ff;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.5);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.btn:hover { background: rgba(88, 166, 255, 0.2); color: #dce9ff; border-color: #58a6ff; }
+.btn:active { background: rgba(34, 211, 238, 0.22); border-color: #22d3ee; }
+
+/* 结算面板整体居中一点 */
+#panel:has(#big) { text-align: center; min-width: 560px; }
+
+/* ---------- 暂停 ---------- */
+#pause {
+  position: absolute;
+  inset: 0;
+  z-index: 320;                    /* 必须高于 #overlay(300)，否则被装备终端盖住、按 ESC 毫无反馈 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 7, 10, 0.66);
+  pointer-events: auto;            /* 整层可点：点一下就继续（失焦回来时最直观的恢复方式） */
+  cursor: pointer;
+}
+#pause.hidden { display: none; }
+#pause .box {
+  position: relative;
+  padding: 22px 34px;
+  text-align: center;
+  background: rgba(10, 16, 24, 0.9);
+  border: 1px solid rgba(88, 166, 255, 0.35);
+}
+#pause h2 {
+  margin: 0 0 10px;
+  font-size: 20px;
+  letter-spacing: 0.3em;
+  color: #9ec9ff;
+}
+#pause p.sub {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: #6b8fb5;
+}
+#pause span { color: #F0E442; }
+
+/* ---------- 底部提示 ---------- */
+#hint {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 220;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: rgba(120, 155, 190, 0.55);
+  white-space: nowrap;
+  pointer-events: none;
+}

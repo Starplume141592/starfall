@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.npm-cache/
+*.local
+
+# 发布产物（由 index.html + src/ 直接生成，不需要入库）
+starfall-web.zip
+
+# 本地临时物
+.ssh_known_hosts
+.playwright-mcp/
+*.log

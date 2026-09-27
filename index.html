@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>星陨</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./src/theme.css">
+</head>
+<body>
+<div id="stage">
+  <canvas id="c"></canvas>
+
+  <div id="hud">
+    <div id="topbar">
+      <div class="bar-row">
+        <span class="tag">装甲</span>
+        <div class="track"><div class="fill" id="hpFill"></div></div>
+        <span class="val" id="hpHp">150/150</span>
+      </div>
+      <div class="bar-row">
+        <span class="tag">同步</span>
+        <div class="track slim"><div class="fill" id="xpFill"></div></div>
+        <span class="val" id="xpVal">0%</span>
+      </div>
+      <div id="stats">
+        <span><i>型号</i><b id="sLv">Mk-I</b></span>
+        <span><i>波次</i><b id="sWave">1</b></span>
+        <span><i>时间</i><b id="sTime">0:00</b></span>
+        <span><i>击毁</i><b id="sKill">0</b></span>
+        <span><i>下波</i><b id="sNext">20s</b></span>
+        <span><i>视角</i><b id="sZoom">1.0×</b></span>
+      </div>
+      <div id="loadout"></div>
+    </div>
+    <div id="combo"></div>
+  </div>
+
+  <div id="overlay"><div id="panel"></div></div>
+  <div id="vignette"></div>
+
+  <div id="pause" class="hidden">
+    <div class="box">
+      <h2 id="pauseTitle">已暂停</h2>
+      <p class="sub">ESC 继续 · 点一下画面也可以 · M 切换音效（<span id="muteState">开</span>）· R 重开本局</p>
+    </div>
+  </div>
+
+  <div id="hint">WASD / 方向键机动 · 自动开火 · 滚轮或 −/= 调镜头高度 · ESC 暂停 · M 静音</div>
+</div>
+<script type="module" src="./src/game.js"></script>
+</body>
+</html>
