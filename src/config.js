@@ -24,92 +24,103 @@ export function mkName(level) {
  *   所以这两个的数是从"还能稳定命中"的距离量出来的（脚本见 reference/架构.md 的验证记录）。
  *   改任何射程都要重跑那条验证：把单个目标摆在 range×0.9 与 ×1.15，必须"前者掉血、后者不掉血"。
  */
+/**
+ * 武器等级映射：**7 级铺满，但满级战力与旧 5 级完全一致**（L(7) = 5）。
+ * 动机：旧版 5 级时，实测武器在 5 分钟就全满级，一局 13 分钟里后 8 分钟构筑已经定型、
+ *       面板只剩属性卡（玩家反馈"个别选择鸡肋"）。改成 7 级后每一级都是小步提升，
+ *       "铺满"被推到 8 分钟以后，而且一局**拿不满全部武器** —— 后期还得挑先练哪把。
+ * 用法：所有与等级线性相关的公式把 `lv` 换成 `L(lv)`；整数型（数量/弹丸数）用 `N(lv)` 取整。
+ * 自检：`node bench/weapons-check.mjs` 会逐把武器比对"新 7 级各档 vs 旧 5 级各档"。
+ */
+const L = lv => 1 + (lv - 1) * (4 / 6);
+const N = lv => Math.round(L(lv));
+
 export const WEAPONS = {
   dart: {
-    mode: 'shot', name: '蜂群导弹', icon: '🚀', color: '#63b3ff', maxLv: 5,
-    dmg: lv => 22 + lv * 12,
-    cd: lv => Math.max(0.08, 0.30 - (lv - 1) * 0.05),
-    num: lv => 1 + lv,
+    mode: 'shot', name: '蜂群导弹', icon: '🚀', color: '#63b3ff', maxLv: 7,
+    dmg: lv => 22 + L(lv) * 12,
+    cd: lv => Math.max(0.08, 0.30 - (L(lv) - 1) * 0.05),
+    num: lv => 1 + N(lv),
     bulletSpeed: 900, range: 620, bulletR: 3, spread: 0.12,
-    pierce: lv => (lv >= 4 ? 2 : 0),
-    desc: lv => `同时射出 ${1 + lv} 枚追踪导弹，伤害 ${22 + lv * 12}`
+    pierce: lv => (lv >= 6 ? 2 : 0),
+    desc: lv => `同时射出 ${1 + N(lv)} 枚追踪导弹，伤害 ${Math.round(22 + L(lv) * 12)}`
   },
   orbit: {
-    mode: 'orbit', name: '卫戍无人机', icon: '🛰️', color: '#7FD8FF', maxLv: 5,
-    dmg: lv => 14 + lv * 10,
-    num: lv => 2 + lv * 2,
+    mode: 'orbit', name: '卫戍无人机', icon: '🛰️', color: '#7FD8FF', maxLv: 7,
+    dmg: lv => 14 + L(lv) * 10,
+    num: lv => 2 + N(lv) * 2,
     radius: 85, spin: 3.0, hitR: 10, knock: 100,
-    desc: lv => `机体周围环绕 ${2 + lv * 2} 架无人机，单架伤害 ${14 + lv * 10}`
+    desc: lv => `机体周围环绕 ${2 + N(lv) * 2} 架无人机，单架伤害 ${Math.round(14 + L(lv) * 10)}`
   },
   saw: {
-    mode: 'orbit', name: '等离子刃环', icon: '⚙️', color: '#B8F0FF', maxLv: 5,
-    dmg: lv => 30 + lv * 18,
-    num: lv => 2 + Math.floor(lv * 1.5),
+    mode: 'orbit', name: '等离子刃环', icon: '⚙️', color: '#B8F0FF', maxLv: 7,
+    dmg: lv => 30 + L(lv) * 18,
+    num: lv => 2 + Math.floor(L(lv) * 1.5),
     radius: 52, spin: 6.5, hitR: 14, knock: 130,
-    desc: lv => `贴身旋转 ${2 + Math.floor(lv * 1.5)} 片等离子刃，伤害 ${30 + lv * 18}`
+    desc: lv => `贴身旋转 ${2 + Math.floor(L(lv) * 1.5)} 片等离子刃，伤害 ${Math.round(30 + L(lv) * 18)}`
   },
   nova: {
-    mode: 'nova', name: '电磁脉冲', icon: '💥', color: '#6F8CFF', maxLv: 5,
-    dmg: lv => 26 + lv * 18,
-    cd: lv => Math.max(0.5, 1.8 - (lv - 1) * 0.22),
-    radius: lv => 110 + lv * 26,
-    desc: lv => `周期性向四周爆发电磁脉冲，伤害 ${26 + lv * 18}`
+    mode: 'nova', name: '电磁脉冲', icon: '💥', color: '#6F8CFF', maxLv: 7,
+    dmg: lv => 26 + L(lv) * 18,
+    cd: lv => Math.max(0.5, 1.8 - (L(lv) - 1) * 0.22),
+    radius: lv => 110 + L(lv) * 26,
+    desc: lv => `周期性向四周爆发电磁脉冲，伤害 ${Math.round(26 + L(lv) * 18)}`
   },
   chain: {
-    mode: 'chain', name: '链式电弧', icon: '⚡', color: '#9ae6ff', maxLv: 5,
-    dmg: lv => 16 + lv * 12,
-    cd: lv => Math.max(0.2, 0.9 - (lv - 1) * 0.1),
-    num: lv => 2 + Math.floor(lv * 1.2),
+    mode: 'chain', name: '链式电弧', icon: '⚡', color: '#9ae6ff', maxLv: 7,
+    dmg: lv => 16 + L(lv) * 12,
+    cd: lv => Math.max(0.2, 0.9 - (L(lv) - 1) * 0.1),
+    num: lv => 2 + Math.floor(L(lv) * 1.2),
     range: 500,
-    desc: lv => `同时打击最近 ${2 + Math.floor(lv * 1.2)} 个目标，伤害 ${16 + lv * 12}`
+    desc: lv => `同时打击最近 ${2 + Math.floor(L(lv) * 1.2)} 个目标，伤害 ${Math.round(16 + L(lv) * 12)}`
   },
   laser: {
-    mode: 'laser', name: '粒子长矛', icon: '🔺', color: '#7cf5a0', maxLv: 5,
-    dmg: lv => 30 + lv * 16,
-    cd: lv => Math.max(0.3, 1.2 - (lv - 1) * 0.15),
-    num: lv => (lv >= 3 ? 2 : 1),
+    mode: 'laser', name: '粒子长矛', icon: '🔺', color: '#7cf5a0', maxLv: 7,
+    dmg: lv => 30 + L(lv) * 16,
+    cd: lv => Math.max(0.3, 1.2 - (L(lv) - 1) * 0.15),
+    num: lv => (lv >= 5 ? 2 : 1),
     len: 780, width: 6,
-    desc: lv => `发射穿透粒子束${lv >= 3 ? '，双发' : ''}，伤害 ${30 + lv * 16}`
+    desc: lv => `发射穿透粒子束${lv >= 5 ? '，双发' : ''}，伤害 ${Math.round(30 + L(lv) * 16)}`
   },
   boomerang: {
-    mode: 'boomerang', name: '回旋切割器', icon: '🪃', color: '#4FD6C8', maxLv: 5,
-    dmg: lv => 24 + lv * 14,
-    cd: lv => Math.max(0.5, 1.8 - (lv - 1) * 0.22),
-    num: lv => 1 + Math.floor(lv / 2),
+    mode: 'boomerang', name: '回旋切割器', icon: '🪃', color: '#4FD6C8', maxLv: 7,
+    dmg: lv => 24 + L(lv) * 14,
+    cd: lv => Math.max(0.5, 1.8 - (L(lv) - 1) * 0.22),
+    num: lv => 1 + Math.floor(L(lv) / 2),
     bulletSpeed: 620, bulletR: 8, range: 460,
-    desc: lv => `投射 ${1 + Math.floor(lv / 2)} 把回旋切割器，往返穿透，伤害 ${24 + lv * 14}`
+    desc: lv => `投射 ${1 + Math.floor(L(lv) / 2)} 把回旋切割器，往返穿透，伤害 ${Math.round(24 + L(lv) * 14)}`
   },
 
   /* ===== 带代价的装备：强，但要付账 ===== */
   overload: {
-    mode: 'shot', name: '过载反应堆', icon: '☢️', color: '#a855f7', maxLv: 5,
-    dmg: lv => 70 + lv * 40,
-    cd: lv => Math.max(0.25, 0.85 - (lv - 1) * 0.1),
-    num: lv => 2 + lv,
+    mode: 'shot', name: '过载反应堆', icon: '☢️', color: '#a855f7', maxLv: 7,
+    dmg: lv => 70 + L(lv) * 40,
+    cd: lv => Math.max(0.25, 0.85 - (L(lv) - 1) * 0.1),
+    num: lv => 2 + N(lv),
     bulletSpeed: 820, range: 640, bulletR: 5, spread: 0.05,
     pierce: () => 1,
-    selfDps: lv => 1.2 + lv * 0.3,
+    selfDps: lv => 1.2 + L(lv) * 0.3,
     tag: '代价',
-    desc: lv => `高能弹伤害 ${70 + lv * 40} 并穿透，但每秒自损 ${(1.2 + lv * 0.3).toFixed(1)} 生命（最多压到 25% 生命）`
+    desc: lv => `高能弹伤害 ${Math.round(70 + L(lv) * 40)} 并穿透，但每秒自损 ${(1.2 + L(lv) * 0.3).toFixed(1)} 生命（最多压到 25% 生命）`
   },
   nanoswarm: {
-    mode: 'shot', name: '纳米虫群', icon: '🦠', color: '#22d3ee', maxLv: 5,
-    dmg: lv => 9 + lv * 4,
-    cd: lv => Math.max(0.12, 0.45 - (lv - 1) * 0.07),
-    num: lv => 3 + lv * 2,
+    mode: 'shot', name: '纳米虫群', icon: '🦠', color: '#22d3ee', maxLv: 7,
+    dmg: lv => 9 + L(lv) * 4,
+    cd: lv => Math.max(0.12, 0.45 - (L(lv) - 1) * 0.07),
+    num: lv => 3 + N(lv) * 2,
     bulletSpeed: 950, range: 560, bulletR: 2, spread: 0.3,
-    onKillHeal: lv => 1 + lv * 0.6,
+    onKillHeal: lv => 1 + L(lv) * 0.6,
     tag: '代价',
-    desc: lv => `${3 + lv * 2} 只纳米虫，单只伤害仅 ${9 + lv * 4}，但每次击杀回复 ${(1 + lv * 0.6).toFixed(1)} 生命（每秒最多回 5% 最大生命）`
+    desc: lv => `${3 + N(lv) * 2} 只纳米虫，单只伤害仅 ${Math.round(9 + L(lv) * 4)}，但每次击杀回复 ${(1 + L(lv) * 0.6).toFixed(1)} 生命（每秒最多回 5% 最大生命）`
   },
   flak: {
-    mode: 'flak', name: '近防霰弹', icon: '🛡️', color: '#A8C8FF', maxLv: 5,
-    dmg: lv => 34 + lv * 20,
-    cd: lv => Math.max(0.5, 1.5 - (lv - 1) * 0.2),
-    pellets: lv => 5 + lv,
+    mode: 'flak', name: '近防霰弹', icon: '🛡️', color: '#A8C8FF', maxLv: 7,
+    dmg: lv => 34 + L(lv) * 20,
+    cd: lv => Math.max(0.5, 1.5 - (L(lv) - 1) * 0.2),
+    pellets: lv => 5 + N(lv),
     bulletSpeed: 780, range: 180, bulletR: 3, spread: 0.8, knock: 7,
     tag: '代价',
-    desc: lv => `扇形喷射 ${5 + lv} 弹丸，单发 ${34 + lv * 20}，射程极短但击退极强`
+    desc: lv => `扇形喷射 ${5 + N(lv)} 弹丸，单发 ${Math.round(34 + L(lv) * 20)}，射程极短但击退极强`
   }
 };
 
@@ -332,12 +343,14 @@ export const PICKUP = { r: 8 };
 
 /**
  * 每级所需经验。
- * 旧曲线 `4 + lv*3.2 + lv²*0.55` 前期太便宜：实测第一分钟杀 173 只 = 346 经验，
- * 而 1→10 级只要 318 —— 于是**第一分钟连升 10 级**（平均每 6 秒弹一次三选一），
- * 武器 5 分钟就全满级，后面 8 分钟构筑已经定型、面板只剩属性卡。
- * 新曲线把 1→7 级的累计需求从 187 提到 289：第一分钟大约升 7 级，
- * 中后期只微涨（40 级 1012 → 1177），保证单局时长不被压短。
+ * 形状要求（两个方向同时满足）：
+ *   ① 前期要陡 —— 旧曲线 `4 + lv*3.2 + lv²*0.55` 太便宜：第一分钟杀 173 只 = 346 经验，
+ *      而 1→10 级只要 318，于是**第一分钟连升 10 级**（每 6 秒弹一次三选一）。
+ *   ② 中后段要够松 —— 武器改成 7 级后，练满 10 把要 60 次选择；一局拿不到 60 次，
+ *      中前期战力就会被摊薄（实测 12 局里 3 局早死）。所以 40/60 级的门槛回到旧值附近。
+ *   取 `11 + lv*4.2 + lv²*0.52`：lv1=15（旧 7）、lv5=45、lv10=105、lv40=1011（旧 1012）、
+ *   lv60=2135（旧 2176）—— 开局照样慢，中后期拿到的选择数与旧版一致。
  */
 export function expNeed(lv) {
-  return Math.floor(9 + lv * 5.2 + lv * lv * 0.6);
+  return Math.floor(11 + lv * 4.2 + lv * lv * 0.52);
 }
