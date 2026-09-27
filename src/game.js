@@ -631,8 +631,13 @@ function buildOptions() {
   for (const s of STATS) {
     const lv = player.statLevels[s.id] || 0;
     if (lv >= s.maxLevel) continue;                       // 关键：属性有上限，杜绝无限堆叠
+    /* 情境剔除（鸡肋卡清理）：满血时的即时治疗 = 空卡；后期固定值卡被成长曲线碾压。
+       这两条只改「出现资格」和权重，不动任何数值，因此不影响已通过的战力校准。 */
+    if (s.id === 'heal' && player.hp >= player.maxHp - 5) continue;
+    let w = s.w;
+    if ((s.id === 'hp' || s.id === 'heal') && player.level >= 40) w *= 0.45;
     pool.push({
-      kind: 'stat', name: s.name, icon: s.icon, iid: s.id, w: s.w, tag: `属性强化 ${lv}/${s.maxLevel}`, desc: s.desc,
+      kind: 'stat', name: s.name, icon: s.icon, iid: s.id, w, tag: `属性强化 ${lv}/${s.maxLevel}`, desc: s.desc,
       apply: () => { s.apply(player); player.statLevels[s.id] = lv + 1; }
     });
   }
@@ -665,9 +670,11 @@ function showUpgrade() {
   const jump = player.jumpPending;
   player.jumpPending = false;
   const opts = jump ? buildModuleOptions() : buildOptions();
-  if (!opts.length) {                       // 理论上不会发生（有保底），保险起见直接恢复
+  if (!opts.length) {                       // 池子抽干（全武器满级且属性全满）：不空转面板
     overlay.classList.remove('show');
     G.paused = false;
+    /* 退回这次升级，避免"升了级却一个都没选到"。若同时到账了多级，递归消化（每轮递减，必然收敛）。 */
+    if (pendingLevels > 0) { pendingLevels--; if (pendingLevels > 0) showUpgrade(); }
     return;
   }
   currentOptions = opts;
@@ -1613,6 +1620,10 @@ window.__game = {
   get panelOpen() { return !!currentOptions; },
   /** 调试用：立刻结束本局（验证结算面板与纪录） */
   killSelf() { damagePlayer(1e9); },
+  /** 调试用：直接给经验（可指定目标等级），用于快速验证升级卡池构成 */
+  grantExp(n = 1) { gainExp(Math.max(1, Math.round(n * expNeed(player.level)))); return player.level; },
+  /** 调试用：当前这一次升级面板里的候选卡名 */
+  get options() { return currentOptions ? currentOptions.map(o => o.name) : null; },
   get pausedManual() { return pausedManual; },
   /** 镜头高度：zoom<1 拉高（看得更远），>1 推近。setZoom 会写 localStorage */
   get zoom() { return zoom; },
