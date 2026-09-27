@@ -3,7 +3,7 @@
 import {
   WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, ELITE, SHOOTER_BULLET,
   ENEMY_SPEED_SCALE,
-  WAVE_LEN, MAX_ENEMY, SPAWN, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
+  WAVE_LEN, MAX_ENEMY, MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE, SPAWN, ENEMY_ABILITY, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
@@ -302,6 +302,9 @@ function buildEnemy(type, x, y, w) {
  *  结果"把敌方弹幕改成红色"只改到一处 —— 玩家当场发现黄弹和紫弹还在飞。
  *  颜色从此只在这里定义：换色改 PALETTE.enemyBullet 一处，全部生效。 */
 function fireBullet(x, y, angle, spd, r, dmg, life, src) {
+  /* 弹幕硬上限：见 config 里的 MAX_ENEMY_BULLET 注释（扇形弹会把弹量推爆） */
+  const reserve = (src === 'eliteBullet' || src === 'bossBullet') ? MAX_ENEMY_BULLET_RESERVE : 0;
+  if (G.enemyBullets.length >= MAX_ENEMY_BULLET + reserve) return;
   G.enemyBullets.push({
     x, y, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd,
     r, dmg, life, color: PALETTE.enemyBullet, src: src || 'bullet'
@@ -1150,7 +1153,10 @@ function update(dt) {
     spawnBoss();
   } else if (G.wave % SPAWN.eliteWaveEvery === 0 && !G.eliteWaveSpawned) {
     G.eliteWaveSpawned = true;
-    for (let i = 0; i < SPAWN.eliteWaveCount; i++) spawnEnemy(true);
+    /* 质变：精英波规模随波次增长（每 12 波 +1 只）——
+       后期真正咬人的是精英的环形弹幕（走保留额度），而不是小怪弹量 */
+    const n = SPAWN.eliteWaveCount + Math.floor(Math.max(0, G.wave - 12) / 12);
+    for (let i = 0; i < n; i++) spawnEnemy(true);
   }
   const rate = SPAWN.rate(G.wave) * SPAWN.ramp(G.t);
   G.spawnAcc += dt * rate;
@@ -1218,7 +1224,16 @@ function update(dt) {
     const dx = player.x - e.x, dy = player.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
     /* 模组：时滞立场 —— 近处的敌人减速 */
-    const spd = (player.slowField < 1 && d < 260) ? e.speed * player.slowField : e.speed;
+    let spd = (player.slowField < 1 && d < 260) ? e.speed * player.slowField : e.speed;
+    /* 质变：重装机兵血量低于 35% 后狂暴（第 20 波起）—— 让你不能"打残就走" */
+    if (G.wave >= ENEMY_ABILITY.tankRage && e.type === 'tank' && !e.elite && !e.boss) {
+      if (!e.raged && e.hp < e.maxHp * 0.35) {
+        e.raged = true;
+        e.dmg *= 1.5;
+        addText(e.x, e.y - 46, '狂暴', '#ff7043', 15);
+      }
+      if (e.raged) spd *= 1.55;
+    }
 
     /* 精英的威胁升级：周期性环形弹幕（普通怪只会撞人，精英会逼你走位） */
     if (e.elite && !e.boss) {
@@ -1335,15 +1350,25 @@ function update(dt) {
       if (e.isDashing) {
         e.dashTimer -= dt;
         e.x += e.dashVx * dt; e.y += e.dashVy * dt;
-        if (e.dashTimer <= 0) e.isDashing = false;
+        if (e.dashTimer <= 0) {
+          e.isDashing = false;
+          /* 质变：第 18 波起冲刺变两段（第一段结束 0.3 秒后接第二段，且第二段更快） */
+          if (G.wave >= ENEMY_ABILITY.triangleDouble && !e.dashChained) {
+            e.dashChained = true;
+            e.dashCd = 0.3;
+            e.dashSpd = 620;
+          }
+        }
       } else {
         e.dashCd -= dt;
         if (e.dashCd <= 0 && d < 400) {
           e.isDashing = true;
           e.dashTimer = 0.35;
           e.dashCd = rand(1.4, 2.4);
-          e.dashVx = dx / d * 480;
-          e.dashVy = dy / d * 480;
+          const ds = e.dashSpd || 480;      // 二段冲刺更快（质变），普通冲刺维持 480
+          e.dashSpd = 480;
+          e.dashVx = dx / d * ds;
+          e.dashVy = dy / d * ds;
         } else {
           e.x += dx / d * spd * dt;
           e.y += dy / d * spd * dt;
@@ -1362,8 +1387,20 @@ function update(dt) {
       e.shootCd -= dt;
       if (e.shootCd <= 0 && d < 520) {
         const b = SHOOTER_BULLET(G.wave);
-        e.shootCd = 1.8;
-        fireBullet(e.x, e.y, Math.atan2(dy, dx), b.spd, b.r, b.dmg, b.life);
+        /* 扇形弹走"弹数换射速"：团更密（更好读、更难穿），但每秒弹量不涨 */
+        const fan = G.wave >= ENEMY_ABILITY.shooterFan;
+        const fast = G.wave >= ENEMY_ABILITY.shooterFast;
+        e.shootCd = fan ? (fast ? 2.4 : 3.2) : (fast ? 1.4 : 1.8);
+        const base = Math.atan2(dy, dx);
+        if (fan) {
+          const n = G.wave >= ENEMY_ABILITY.shooterFan5 ? 5 : 3;
+          const step = 0.11;
+          for (let k = 0; k < n; k++) {
+            fireBullet(e.x, e.y, base + (k - (n - 1) / 2) * step, b.spd, b.r, b.dmg, b.life);
+          }
+        } else {
+          fireBullet(e.x, e.y, base, b.spd, b.r, b.dmg, b.life);
+        }
       }
     }
     /* 其余：直线追踪 */

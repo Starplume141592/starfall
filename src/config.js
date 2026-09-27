@@ -307,6 +307,26 @@ export const CHEST_MAGNET_RANGE = 620;
 /** 曲线与常量 */
 export const WAVE_LEN = 20;
 export const MAX_ENEMY = 420;
+/**
+ * 敌方弹幕硬上限：扇形弹解锁后弹量会指数膨胀（实测第 14 波曾冲到 867 发）——
+ * 既卡性能，也直接毁掉可读性（"元素混乱"）。精英/首领的环形弹幕保留额外额度，
+ * 那是设计上的"正菜"，不该被小怪弹挤掉。
+ */
+export const MAX_ENEMY_BULLET = 260;
+export const MAX_ENEMY_BULLET_RESERVE = 80;
+/**
+ * 敌人「质变」表（第三批 #11）：按波次解锁**新行为**，而不是只加血加伤。
+ * 为什么需要：SPAWN.rate 在第 17 波就封顶 20/秒、同屏上限 420，
+ * 18 波之后唯一的压力来源只剩敌血成长 —— 结果是"要么撞死在 42 波、要么一路拖到 90 波"的双峰分布。
+ * 这里给后期补上机制性的压力（扇形弹 / 二段冲刺 / 狂暴），而不是把敌人做成海绵。
+ */
+export const ENEMY_ABILITY = {
+  shooterFan: 12,      // 炮塔机：单发 -> 3 发扇形
+  shooterFan5: 28,     // 炮塔机：扇形扩到 5 发
+  triangleDouble: 18,  // 突袭机：冲刺变两段（第一段结束后 0.3 秒接第二段）
+  tankRage: 20,        // 重装机兵：血量 <35% 狂暴（移速 ×1.55、接触伤害 ×1.5）
+  shooterFast: 30      // 炮塔机：射击间隔 1.8 -> 1.25 秒
+};
 export const SPAWN = {
   /**
    * 每秒生成数 = 基础曲线 × 开局渐入系数。
