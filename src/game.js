@@ -297,6 +297,17 @@ function buildEnemy(type, x, y, w) {
   return e;
 }
 
+/** 敌方弹幕的**唯一构造入口**。
+ *  以前三处（炮塔机 / 精英环弹 / Boss 弹幕）各自 push、各自写颜色，其中两处是硬编码，
+ *  结果"把敌方弹幕改成红色"只改到一处 —— 玩家当场发现黄弹和紫弹还在飞。
+ *  颜色从此只在这里定义：换色改 PALETTE.enemyBullet 一处，全部生效。 */
+function fireBullet(x, y, angle, spd, r, dmg, life, src) {
+  G.enemyBullets.push({
+    x, y, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd,
+    r, dmg, life, color: PALETTE.enemyBullet, src: src || 'bullet'
+  });
+}
+
 /** 精英化：血厚、体型大、经验多、伤害高 */
 function makeElite(e, w) {
   e.elite = true;
@@ -545,8 +556,8 @@ function applyPickup(p) {
   } else if (p.kind === 'chest') {
     player.exp += 0;                       // 宝箱 = 白送一次升级
     pendingLevels++;
-    addText(player.x, player.y - 36, '宝箱！获得升级', '#ffd166', 20);
-    burst(player.x, player.y, '#ffd166', 18, 300);
+    addText(player.x, player.y - 36, '宝箱！获得升级', PALETTE.elite, 20);
+    burst(player.x, player.y, PALETTE.elite, 18, 300);
     audio.jump();
     if (!G.paused) showUpgrade();
   } else if (p.kind === 'bomb') {
@@ -1098,7 +1109,7 @@ function update(dt) {
       flash(.18, '240,101,149');
     } else if (nextWave % SPAWN.eliteWaveEvery === 0) {
       G.eventWarned = true;
-      addText(cx, cy - 150, '⚠ 精英波 3 秒后抵达', '#ffd166', 20);
+      addText(cx, cy - 150, '⚠ 精英波 3 秒后抵达', PALETTE.elite, 20);
       audio.levelUp();
     }
   }
@@ -1110,7 +1121,7 @@ function update(dt) {
     G.eliteWaveSpawned = false;
     G.eventWarned = false;
     addText(cx, cy - 100, `第 ${G.wave} 波`, '#58a6ff', 26);
-    if (G.wave % SPAWN.eliteWaveEvery === 0) addText(cx, cy - 62, '精英波', '#ffd166', 20);
+    if (G.wave % SPAWN.eliteWaveEvery === 0) addText(cx, cy - 62, '精英波', PALETTE.elite, 20);
   }
   if (G.wave % 5 === 0 && !G.bossSpawned) {
     G.bossSpawned = true;
@@ -1195,12 +1206,7 @@ function update(dt) {
         const bdef = SHOOTER_BULLET(G.wave);
         for (let k = 0; k < ELITE_BURST.count; k++) {
           const a = k * Math.PI * 2 / ELITE_BURST.count + G.t;
-          G.enemyBullets.push({
-            x: e.x, y: e.y,
-            vx: Math.cos(a) * bdef.spd * ELITE_BURST.speedMul,
-            vy: Math.sin(a) * bdef.spd * ELITE_BURST.speedMul,
-            r: bdef.r, dmg: e.dmg * 0.4, life: 4.5, color: '#ffd166'
-          });
+          fireBullet(e.x, e.y, a, bdef.spd * ELITE_BURST.speedMul, bdef.r, e.dmg * 0.4, 4.5, 'eliteBullet');
         }
       }
     }
@@ -1213,7 +1219,7 @@ function update(dt) {
       if (e.state === 'chase') {
         e.x += dx / d * spd * dt;
         e.y += dy / d * spd * dt;
-        if (e.stateTime <= 0) { e.state = 'prep'; e.stateTime = 0.9; addText(e.x, e.y - 56, '蓄能...', '#c084fc', 18); }
+        if (e.stateTime <= 0) { e.state = 'prep'; e.stateTime = 0.9; addText(e.x, e.y - 56, '蓄能...', PALETTE.bossRim, 18); }
       } else if (e.state === 'prep') {
         e.x += dx / d * spd * 0.2 * dt;
         e.y += dy / d * spd * 0.2 * dt;
@@ -1222,11 +1228,7 @@ function update(dt) {
           const bdef = SHOOTER_BULLET(G.wave);
           for (let k = 0; k < n; k++) {
             const a = k * Math.PI * 2 / n + G.t;
-            G.enemyBullets.push({
-              x: e.x, y: e.y,
-              vx: Math.cos(a) * bdef.spd * 1.1, vy: Math.sin(a) * bdef.spd * 1.1,
-              r: bdef.r + 1, dmg: e.dmg * 0.6, life: 6, color: '#c084fc'
-            });
+            fireBullet(e.x, e.y, a, bdef.spd * 1.1, bdef.r + 1, e.dmg * 0.6, 6, 'bossBullet');
           }
           shake = Math.max(shake, 12);
           flash(.18, '192,132,252');
@@ -1239,7 +1241,7 @@ function update(dt) {
             const child = buildEnemy('fast', e.x + Math.cos(a) * 60, e.y + Math.sin(a) * 60, G.wave);
             G.enemies.push(child);
           }
-          burst(e.x, e.y, '#c084fc', 20, 320);
+          burst(e.x, e.y, PALETTE.bossRim, 20, 320);
           e.state = 'stunned'; e.stateTime = 1.2; e.vulnMul = 2.2;   // 召唤后短暂虚弱
         }
       } else if (e.state === 'stunned') {
@@ -1339,11 +1341,7 @@ function update(dt) {
       if (e.shootCd <= 0 && d < 520) {
         const b = SHOOTER_BULLET(G.wave);
         e.shootCd = 1.8;
-        G.enemyBullets.push({
-          x: e.x, y: e.y,
-          vx: dx / d * b.spd, vy: dy / d * b.spd,
-          r: b.r, dmg: b.dmg, life: b.life, color: b.color
-        });
+        fireBullet(e.x, e.y, Math.atan2(dy, dx), b.spd, b.r, b.dmg, b.life);
       }
     }
     /* 其余：直线追踪 */
@@ -1367,7 +1365,7 @@ function update(dt) {
     }
     const dx = player.x - b.x, dy = player.y - b.y;
     if (dx * dx + dy * dy < (player.r + b.r) ** 2) {
-      damagePlayer(b.dmg, b.color === '#ffd166' ? 'eliteBullet' : 'bullet');
+      damagePlayer(b.dmg, b.src || 'bullet');
       burst(b.x, b.y, b.color, 6, 180);
       G.enemyBullets.splice(i, 1);
     }
