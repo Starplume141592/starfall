@@ -1,7 +1,7 @@
 // 劫波 · 游戏逻辑与主循环（原生 ES module，无打包器、无依赖、无资源文件）
 // 所有数值来自 config.js；绘制全部交给 render.js。行为与单文件 Demo 完全一致。
 import {
-  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, ZONE, LASER, ELITE, SHOOTER_BULLET,
+  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, BLINK, ZONE, LASER, ELITE, SHOOTER_BULLET,
   ENEMY_SPEED_SCALE,
   WAVE_LEN, MAX_ENEMY, MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE, SPAWN, ENEMY_ABILITY, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
@@ -354,6 +354,18 @@ function spawnEnemy(forceElite) {
   const e = buildEnemy(type, x, y, w);
   if (forceElite || Math.random() < ELITE.chance(w)) makeElite(e, w);
   G.enemies.push(e);
+  /* 编队冲锋（#12）：一定概率以"小队"形式出现（同一侧、间隔很近），
+     单只怪是骚扰、一小队才是压力 —— 也让 AoE 武器有发挥场景。
+     受同屏上限约束，且精英波不叠加（避免一帧内爆量）。 */
+  if (!forceElite && w >= 6 && G.enemies.length < MAX_ENEMY - 4 && Math.random() < 0.16) {
+    const n = 2 + Math.floor(Math.random() * 3);
+    for (let k = 0; k < n && G.enemies.length < MAX_ENEMY; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const sep = rand(34, 64);
+      const m = buildEnemy(type, clamp(x + Math.cos(a) * sep, 20, WORLD.w - 20), clamp(y + Math.sin(a) * sep, 20, WORLD.h - 20), w);
+      G.enemies.push(m);
+    }
+  }
   return e;
 }
 
@@ -368,9 +380,10 @@ function spawnBoss() {
   else if (side === 1) { x = R; y = clamp(G.cam.y + viewH() / 2, 60, WORLD.h - 60); }
   else if (side === 2) { x = clamp(G.cam.x + viewW() / 2, 60, WORLD.w - 60); y = B; }
   else { x = L; y = clamp(G.cam.y + viewH() / 2, 60, WORLD.h - 60); }
-  const def = (w % 20 === 0) ? BOSS_TYPES.juggernaut
-    : (w % 15 === 0) ? BOSS_TYPES.spinner
-      : (w % 10 === 0) ? BOSS_TYPES.summoner : BOSS_TYPES.charger;
+  const def = (w % 25 === 0) ? BOSS_TYPES.phantom
+    : (w % 20 === 0) ? BOSS_TYPES.juggernaut
+      : (w % 15 === 0) ? BOSS_TYPES.spinner
+        : (w % 10 === 0) ? BOSS_TYPES.summoner : BOSS_TYPES.charger;
   const hp = def.hp(w);
   const boss = {
     id: ++uid, x, y, r: def.r, hp, maxHp: hp, speed: def.spd * ENEMY_SPEED_SCALE(w), dmg: def.dmg(w),
@@ -1356,6 +1369,40 @@ function update(dt) {
       }
     }
 
+    /* 相位者：追击 → 相位锁定 → 瞬移贴身 + 环形弹幕 → 虚弱。
+       阶段专属新招：阶段 2 起"离开时留下封锁圈"，阶段 3 起改为双段瞬移（连甩两次）。 */
+    if (e.boss && e.variant === 'phantom') {
+      e.stateTime -= dt;
+      const fireRing = (n) => {
+        const pb = SHOOTER_BULLET(G.wave);
+        for (let k = 0; k < n; k++) {
+          fireBullet(e.x, e.y, k * Math.PI * 2 / n + G.t, pb.spd * 1.2, pb.r + 1, e.dmg * 0.55, 6, 'bossBullet');
+        }
+      };
+      if (e.state === 'chase') {
+        e.x += dx / d * spd * dt;
+        e.y += dy / d * spd * dt;
+        if (e.stateTime <= 0) { e.state = 'blink_prep'; e.stateTime = BLINK.prep; addText(e.x, e.y - 56, '相位锁定...', '#c084fc', 18); }
+      } else if (e.state === 'blink_prep') {
+        if (e.stateTime <= 0) {
+          const oldX = e.x, oldY = e.y;
+          const a = rand(0, Math.PI * 2);
+          e.x = clamp(player.x + Math.cos(a) * BLINK.dist, 40, WORLD.w - 40);
+          e.y = clamp(player.y + Math.sin(a) * BLINK.dist, 40, WORLD.h - 40);
+          burst(oldX, oldY, '#c084fc', 22, 320);
+          burst(e.x, e.y, '#c084fc', 22, 320);
+          /* 阶段 2 起：离开的位置留下封锁圈（新招式，不是数值上浮） */
+          if (e.phase >= 1 && G.zones.length < ZONE.max) spawnZones(oldX, oldY, 1, e.dmg * ZONE.dmgMul);
+          fireRing(e.phase >= 1 ? BLINK.ringPhase2 : BLINK.ring);
+          shake = Math.max(shake, 10);
+          /* 阶段 3 起：双段瞬移 */
+          if (e.phase >= 2) { e.state = 'blink_prep'; e.stateTime = 0.35; }
+          else { e.state = 'stunned'; e.stateTime = BLINK.stun; e.vulnMul = 2.2; }
+        }
+      } else if (e.state === 'stunned') {
+        if (e.stateTime <= 0) { e.state = 'chase'; e.stateTime = 2.4 * e.cdMul; e.vulnMul = 1; }
+      }
+    }
     /* 旋翼者：追击 → 蓄能 → 螺旋弹幕（持续 3 秒，边转边射）→ 虚弱 */
     if (e.boss && e.variant === 'spinner') {
       e.stateTime -= dt;
@@ -1439,9 +1486,12 @@ function update(dt) {
         }
       } else if (e.state === 'summon') {
         if (e.stateTime <= 0) {
-          for (let k = 0; k < 4; k++) {
-            const a = k * Math.PI / 2;
+          /* 阶段专属新招：阶段 2 起召唤数量翻倍，阶段 3 起召唤物直接是精英 */
+          const cnt = e.phase >= 1 ? 8 : 4;
+          for (let k = 0; k < cnt; k++) {
+            const a = k * Math.PI * 2 / cnt;
             const child = buildEnemy('fast', e.x + Math.cos(a) * 60, e.y + Math.sin(a) * 60, G.wave);
+            if (e.phase >= 2) makeElite(child, G.wave);
             G.enemies.push(child);
           }
           burst(e.x, e.y, PALETTE.bossRim, 20, 320);
@@ -1500,6 +1550,14 @@ function update(dt) {
           hitStop = Math.max(hitStop, 0.08);
           addText(e.x, e.y - 70, hitWall ? '瘫痪！受伤 ×3' : '过载！受伤 ×3', '#ffcc00', 22);
           burst(e.x, e.y, '#ffaa00', 36, 500);
+          /* 阶段专属新招：阶段 2 起，撞停的同时向四周甩一圈弹幕（惩罚"贴脸看戏"） */
+          if (e.phase >= 1) {
+            const pb = SHOOTER_BULLET(G.wave);
+            const n = e.phase >= 2 ? 14 : 9;
+            for (let k = 0; k < n; k++) {
+              fireBullet(e.x, e.y, k * Math.PI * 2 / n + G.t, pb.spd * 1.1, pb.r, e.dmg * 0.5, 5.5, 'bossBullet');
+            }
+          }
         }
       }
       else if (e.state === 'stunned') {
@@ -1614,9 +1672,21 @@ function update(dt) {
        远距离时向两翼展开，避免所有怪挤在同一条直线上（那样看起来是一坨、也不构成包围） */
     else {
       if (e.flank === undefined) e.flank = rand(-1, 1);
-      const lat = d > 190 ? 0.55 * e.flank : 0;
-      e.x += (dx / d * spd - dy / d * spd * lat) * dt;
-      e.y += (dy / d * spd + dx / d * spd * lat) * dt;
+      /* 受击撤退（#12）：残血后撤 1.2 秒再回来（一生一次）—— 让"打残"不是纯粹的好事，
+         也给穿透/连锁武器留出"追着打"的空间 */
+      if (e.fleeT === undefined && e.hp < e.maxHp * 0.25 && e.type !== 'tank') {
+        e.fleeT = 1.2;
+        if (Math.random() < 0.25) addText(e.x, e.y - 34, '撤退', '#9aa5b1', 13);
+      }
+      if (e.fleeT > 0) {
+        e.fleeT -= dt;
+        e.x -= dx / d * spd * 1.25 * dt;
+        e.y -= dy / d * spd * 1.25 * dt;
+      } else {
+        const lat = d > 190 ? 0.55 * e.flank : 0;
+        e.x += (dx / d * spd - dy / d * spd * lat) * dt;
+        e.y += (dy / d * spd + dx / d * spd * lat) * dt;
+      }
     }
 
     e.x += e.kx * dt; e.y += e.ky * dt;

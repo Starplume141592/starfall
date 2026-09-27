@@ -322,8 +322,18 @@ export const BOSS_TYPES = {
     name: '壁垒者', variant: 'juggernaut',
     hp: w => (620 + w * 260) * ENEMY_SCALE(w), spd: 70, r: 24, color: PALETTE.bossBody, exp: 110,
     dmg: w => (16 + w * 1.3) * ENEMY_DMG_SCALE(w)
+  },
+  /* 相位者：瞬移贴身 + 环形弹幕。阶段越高"招式"越不同（离开时留封锁圈、双段瞬移）——
+     它是"阶段专属新招"的样板：同一个 boss 在不同血量段要用不同打法应对。 */
+  phantom: {
+    name: '相位者', variant: 'phantom',
+    hp: w => (440 + w * 210) * ENEMY_SCALE(w), spd: 96, r: 19, color: PALETTE.bossBody, exp: 85,
+    dmg: w => (13 + w * 1.15) * ENEMY_DMG_SCALE(w)
   }
 };
+
+/** 相位者的瞬移参数 */
+export const BLINK = { dist: 190, prep: 0.5, stun: 0.9, ring: 8, ringPhase2: 12 };
 
 /**
  * Boss 阶段变化（#14）：血量过线就换招、加速、缩短冷却 —— 让同一场战斗有三个"读法"。
