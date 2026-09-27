@@ -10,3 +10,9 @@ starfall-web.zip
 .ssh_known_hosts
 .playwright-mcp/
 *.log
+
+# 临时凭据 / 证书（绝不入库：GitHub 的推送保护也会挡）
+.gh-token
+.gh-device.json
+.ca-steamtools.*
+.ca.pem

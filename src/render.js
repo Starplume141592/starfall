@@ -730,7 +730,11 @@ export function render(ctx, S) {
   /* 玩家：引擎尾焰 + 光晕 + 沿速度方向拉伸 */
   const pspd = Math.hypot(player.vx, player.vy);
   const spdRatio = Math.min(pspd / player.speed, 1);
-  const inv = player.invuln > 0 && Math.floor(player.invuln * 20) % 2 === 0;
+  /* 无敌闪烁：原来是 `floor(invuln*20)%2` —— 每秒 20 次硬翻转，正落在光敏峰值频段 16–25Hz。
+     改成 5Hz 的**呼吸式**透明度脉动：还是能看出"无敌中"，但不再是一秒闪二十下的频闪。 */
+  const inv = player.invuln > 0
+    ? 0.55 + 0.45 * (Math.sin(player.invuln * Math.PI * 2 * 5) * 0.5 + 0.5)   // 0.55 ~ 1.0
+    : 1;
 
   if (spdRatio > 0.15) {
     ctx.globalCompositeOperation = 'lighter';
@@ -748,7 +752,7 @@ export function render(ctx, S) {
   }
 
   ctx.globalCompositeOperation = 'lighter';
-  drawGlow(ctx, player.x, player.y, PALETTE.playerRing, 30, inv ? 0.3 : 0.8);
+  drawGlow(ctx, player.x, player.y, PALETTE.playerRing, 30, 0.8 * inv);
   ctx.globalCompositeOperation = 'source-over';
 
   ctx.save();
@@ -757,7 +761,7 @@ export function render(ctx, S) {
   const stretch = 1 + spdRatio * 0.22;
   ctx.scale(stretch, 1 / stretch);
   ctx.rotate(-player.angle);
-  ctx.globalAlpha = inv ? 0.35 : 1;
+  ctx.globalAlpha = inv;
   ctx.fillStyle = PALETTE.playerHull;
   ctx.beginPath(); ctx.arc(0, 0, player.r, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = PALETTE.playerRing;

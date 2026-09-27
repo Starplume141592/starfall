@@ -83,6 +83,37 @@ canvas {
   pointer-events: none;
 }
 
+/* 顶部正中：运行计时 + 下一波倒计时。
+   计时是玩家全程都要瞥的信息，放在正中比塞进左上角遥测行里好找得多；
+   倒计时贴在它下面：常态是冷灰（信息），精英/陨级波转琥珀（危险语义色，和敌方弹幕同色）。 */
+#clock {
+  position: absolute;
+  top: 9px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+#clock b {
+  display: block;
+  font-size: 40px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  color: #eaf4ff;
+  text-shadow: 0 0 20px rgba(43, 217, 255, 0.42), 0 2px 12px rgba(0, 0, 0, 0.85);
+}
+#clock span {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #8FB0CF;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
+  transition: color 0.2s;
+}
+#clock span.warn { color: #FFB020; text-shadow: 0 0 12px rgba(255, 176, 32, 0.6), 0 1px 8px rgba(0, 0, 0, 0.9); }
+
 #topbar {
   position: relative;
   width: 296px;

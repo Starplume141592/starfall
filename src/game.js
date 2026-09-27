@@ -82,6 +82,19 @@ let player, G, pendingLevels = 0, shake = 0, uid = 0;
 let hitStop = 0, flashA = 0, flashColor = '255,90,90';
 const keys = {};
 
+/* ==================== 闪光票据制 ====================
+   全屏闪光是"亮度突变 + 大面积"，WCAG 2.3.1 的规范线是每秒不超过 3 次。
+   以前各处直接 `flashA = Math.max(flashA, x)`，密集击杀时一秒能闪七八次。
+   现在发票据：冷却期内的请求**直接丢弃**（不排队，也不打折补发 —— 半强度连续闪照样是闪）。 */
+const FLASH_TICKET = 1 / 3;         // 每 340ms 一张
+let flashCd = 0;
+function flash(amount, color) {
+  if (flashCd > 0) return;
+  flashCd = FLASH_TICKET;
+  flashA = Math.max(flashA, amount);
+  if (color) flashColor = color;
+}
+
 const overlay = document.getElementById('overlay');
 const panel = document.getElementById('panel');
 const elHp = document.getElementById('hpFill');
@@ -90,9 +103,9 @@ const elHpNum = document.getElementById('hpHp');
 const elXpVal = document.getElementById('xpVal');
 const elLv = document.getElementById('sLv');
 const elWave = document.getElementById('sWave');
-const elTime = document.getElementById('sTime');
+const elTime = document.getElementById('clockTime');     // 顶部正中：运行计时
 const elKill = document.getElementById('sKill');
-const elNext = document.getElementById('sNext');
+const elNext = document.getElementById('clockNext');      // 顶部正中：下一波倒计时
 const elZoom = document.getElementById('sZoom');
 const loadoutEl = document.getElementById('loadout');
 let loadoutKey = '';
@@ -349,7 +362,7 @@ function spawnBoss() {
   G.enemies.push(boss);
   audio.bossWarn();
   addText(x, y - 60, `警告：${def.name} 接近`, def.color, 24);
-  flashA = Math.max(flashA, .4); flashColor = '240,101,149';
+  flash(.4, '240,101,149');
   shake = Math.max(shake, 12);
 }
 
@@ -438,13 +451,13 @@ function hurtEnemy(e, dmg, kx, ky) {
     if (e.boss) hitStop = Math.max(hitStop, 0.12);
     else if (crit) hitStop = Math.max(hitStop, 0.025);
 
-    shake = Math.max(shake, e.boss ? 20 : 3 + Math.min(G.combo, 10) * 0.2);
+    shake = Math.max(shake, e.boss ? 20 : 2);   // 击杀：原来是 3~5（随连击增长），密集清屏时会一直抖
 
     if (e.boss) {
-      flashA = Math.max(flashA, 0.5); flashColor = '240,101,149';
+      flash(.5, '240,101,149');
       hitStop = Math.max(hitStop, 0.2);
     } else if (G.combo > 0 && G.combo % 10 === 0) {
-      flashA = Math.max(flashA, 0.12); flashColor = '255,90,90';
+      flash(.12, '255,90,90');
     }
 
     burst(e.x, e.y, e.color, e.boss ? 50 : 12, e.boss ? 600 : 280);
@@ -505,8 +518,8 @@ function damagePlayer(dmg, src) {
   if (src) G.dmgTaken[src] = (G.dmgTaken[src] || 0) + real;    // 调试：伤害来源统计
   player.invuln = PLAYER.invuln;
   audio.hurt();
-  shake = Math.max(shake, 12);
-  flashA = Math.max(flashA, 0.3); flashColor = '255,60,60';
+  shake = Math.max(shake, 4);            // 受击震动：原来 12，玩家反馈"伤害反馈过强"
+  flash(.3, '255,60,60');
   addText(player.x, player.y - 26, '-' + Math.round(real), '#ff7b72', 18);
   burst(player.x, player.y, '#ff7b72', 10, 240);
   if (player.hp <= 0) { player.hp = 0; gameOver(); }
@@ -535,7 +548,7 @@ function applyPickup(p) {
   } else if (p.kind === 'bomb') {
     /* 快照一份再遍历：hurtEnemy 击杀分裂机时会往 G.enemies push 子机 */
     for (const e of G.enemies.slice()) { if (!e.dead) hurtEnemy(e, 300, 0, 0); }
-    flashA = 0.55; flashColor = '255,200,80';
+    flashA = 0.55; flashColor = '255,200,80';       // 玩家主动放的战术弹：不走票据，这是玩家自己的动作
     shake = Math.max(shake, 22);
     addText(player.x, player.y - 34, '战术弹！', '#ffaa00', 22);
   }
@@ -674,7 +687,7 @@ function chooseOption(o) {
 
 function gameOver() {
   G.over = true; G.paused = true;
-  flashA = 0.5; flashColor = '255,60,60';
+  flashA = 0.5; flashColor = '255,60,60';           // 结算：一局只有一次，不走票据
   audio.over();
 
   /* 最高纪录（localStorage） */
@@ -930,6 +943,7 @@ const frameDrag = (base, dt) => Math.pow(base, dt * 60);
 
 function update(dt) {
   G.t += dt;
+  if (flashCd > 0) flashCd -= dt;                      // 闪光票据冷却
   zoom += (zoomTarget - zoom) * Math.min(1, 9 * dt);   // 镜头高度平滑过渡，避免跳变
   /* DPS 采样（每秒一格，保留 60 格） */
   if (G.t - G.lastDmgAt >= 1) {
@@ -1077,7 +1091,7 @@ function update(dt) {
       G.eventWarned = true;
       addText(cx, cy - 150, '⚠ 陨级单位 3 秒后抵达', '#f06595', 22);
       audio.bossWarn();
-      flashA = Math.max(flashA, 0.18); flashColor = '240,101,149';
+      flash(.18, '240,101,149');
     } else if (nextWave % SPAWN.eliteWaveEvery === 0) {
       G.eventWarned = true;
       addText(cx, cy - 150, '⚠ 精英波 3 秒后抵达', '#ffd166', 20);
@@ -1211,7 +1225,7 @@ function update(dt) {
             });
           }
           shake = Math.max(shake, 12);
-          flashA = Math.max(flashA, 0.18); flashColor = '192,132,252';
+          flash(.18, '192,132,252');
           e.state = 'summon'; e.stateTime = 0.7;
         }
       } else if (e.state === 'summon') {
@@ -1272,7 +1286,7 @@ function update(dt) {
           e.stateTime = 3.0;
           e.vulnMul = 3;
           shake = Math.max(shake, 22);
-          flashA = Math.max(flashA, 0.35);
+          flash(.35);
           flashColor = '255,200,80';
           hitStop = Math.max(hitStop, 0.08);
           addText(e.x, e.y - 70, hitWall ? '瘫痪！受伤 ×3' : '过载！受伤 ×3', '#ffcc00', 22);
@@ -1447,7 +1461,7 @@ function updateHUD() {
   const nextWave = G.wave + 1;
   const nextIsBoss = nextWave % 5 === 0;
   const nextIsElite = !nextIsBoss && nextWave % SPAWN.eliteWaveEvery === 0;
-  setText(elNext, 'next', `${nextIsBoss ? '陨级' : nextIsElite ? '精英' : ''}${left}s`);
+  setText(elNext, 'next', `下一波 ${nextIsBoss ? '陨级 · ' : nextIsElite ? '精英 · ' : ''}${left}s`);
   setFlag(elNext, 'nextWarn', nextIsBoss || nextIsElite);
   setText(elZoom, 'zoom', zoomTarget.toFixed(1) + '×');
 
