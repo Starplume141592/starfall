@@ -8,6 +8,7 @@ import {
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
   PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, SHOP_ITEMS, CREDIT, SHOP_INFLATE,
+  VERSION, REPO_URL, ISSUE_URL, FEEDBACK_KINDS,
   expNeed, mkName
 } from './config.js';
 
@@ -149,6 +150,13 @@ const elCombo = document.getElementById('combo');
 const pauseEl = document.getElementById('pause');
 const pauseTitleEl = document.getElementById('pauseTitle');
 const muteStateEl = document.getElementById('muteState');
+/* 意见收集的两个常驻入口：暂停面板里的按钮 + 战场右下角的常驻小按钮 */
+document.getElementById('fbPause').onclick = () => showFeedback();
+document.getElementById('fbCorner').onclick = () => {
+  if (G && G.over) return;              // 结算时用面板里的那个入口（这个按钮会被遮罩挡住）
+  if (panelMode === 'ship') return;     // 开局菜单里也有自己的入口
+  showFeedback();
+};
 
 /** 当前装备终端里的三张卡（支持 1/2/3 快捷选择） */
 let currentOptions = null;
@@ -212,6 +220,7 @@ function reset() {
   };
   pendingLevels = 0; shake = 0; hitStop = 0; flashA = 0;
   currentOptions = null;
+  panelMode = null;                 // 重开一局作废所有面板状态（不然守卫会拦住后续入口）
   loadoutKey = '!';
   pausedManual = false;
   pauseEl.classList.add('hidden');
@@ -252,7 +261,9 @@ window.addEventListener('keydown', e => {
   audio.unlock();                       // 浏览器要求首次用户操作后才能出声
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   if (e.code === 'Escape') {
-    if (shopOpen) { closeShop(); return; }
+    if (panelMode === 'shop') { closeShop(); return; }
+    if (panelMode === 'feedback') { closePanel(); return; }
+    if (panelMode === 'ship' || panelMode === 'meta') return;   // 开局菜单：ESC 没有"关闭"的语义
     if (!currentOptions) togglePause();
     return;
   }
@@ -865,10 +876,12 @@ function gameOver() {
     <p class="sub build">本局构筑：${build || '无'}</p>
     ${mods ? `<p class="sub build">超频模组：${mods}</p>` : ''}
     <button class="btn" id="again">重新接入</button>
-    <button class="btn alt" id="toMeta">研发终端</button>`;
+    <button class="btn alt" id="toMeta">研发终端</button>
+    <button class="btn alt" id="fbOver">意见收集</button>`;
   overlay.classList.add('show');
   document.getElementById('again').onclick = showShipSelect;
   document.getElementById('toMeta').onclick = () => showMeta();
+  document.getElementById('fbOver').onclick = () => showFeedback();
 }
 
 /* ==================== 战机选择（#18） ==================== */
@@ -894,20 +907,22 @@ function showShipSelect(silent) {
   panel.innerHTML = `<h2>选择机体 // 接入前</h2>
     <p class="sub">机体差异只在单局内生效 · 点击或按 1 / 2 / 3</p>
     <div id="cards" class="ships">${cards}</div>
-    <button class="btn" id="metaOpen">研发终端 · 局外信用点 ${meta.credits}</button>`;
+    <button class="btn" id="metaOpen">研发终端 · 局外信用点 ${meta.credits}</button>
+    <button class="btn alt" id="fbShip">意见收集</button>`;
   overlay.classList.add('show');
-  const mo = document.getElementById('metaOpen');
-  if (mo) mo.onclick = () => showMeta();
   const pick = (id) => {
     shipId = id;
     try { localStorage.setItem(SHIP_KEY, id); } catch (e) { /* 隐私模式下忽略 */ }
     panel._shipPick = null;          // 必须清掉：否则对局中按 1/2/3 会当成"选机体"直接重开
+    panelMode = null;                // 同理：不清会让"意见收集"角落按钮的守卫一直拦着自己
     overlay.classList.remove('show');
     restart();
   };
   panel.querySelectorAll('.card').forEach(el => { el.onclick = () => pick(el.dataset.ship); });
   panel._shipPick = pick;
-  panel._metaBtn = true;
+  panelMode = 'ship';
+  document.getElementById('metaOpen').onclick = () => showMeta();
+  document.getElementById('fbShip').onclick = () => showFeedback();
 }
 
 /* ==================== 局内商店（#16） ==================== */
@@ -948,11 +963,15 @@ function buyItem(item) {
 /** 商店面板是否开着（B 键开关，暂停游戏） */
 let shopOpen = false;
 
+/** 当前打开的是哪个非升级面板（ESC 需要据此决定"关面板"还是"暂停"） */
+let panelMode = null;
+
 /** 商店面板：B 键开关（暂停游戏）。任何时候都能开 —— 但钱只来自精英/首领。 */
 function showShop() {
   G.paused = true;
   currentOptions = null;
   panel._shipPick = null;
+  panelMode = 'shop';
   const rows = SHOP_ITEMS.map(it => {
     const price = shopPrice(it);
     const owned = it.once && player.shopBought[it.id];
@@ -982,6 +1001,130 @@ function showShop() {
 function closeShop() {
   overlay.classList.remove('show');
   shopOpen = false;
+  panelMode = null;
+  G.paused = !!pausedManual;
+  currentOptions = null;
+  if (pausedManual) pauseEl.classList.remove('hidden');
+}
+
+/* ==================== 意见收集（无需后端） ====================
+   设计取舍：这个项目是纯静态站、没有服务器，所以"提交"不能靠接口。能用的只有三条路：
+   ① 打开预填好的 GitHub Issue（公开仓库，点一下就带标题正文）；
+   ② 一键复制完整报告到剪贴板（贴到群里/论坛/邮件都行）；
+   ③ 本地也留一份（最多 10 条）—— 万一玩家两条路都没走通，内容也不会凭空消失。
+   报告会自动附带诊断信息（版本/机型/波次/构筑/浏览器），省得玩家描述半天环境。 */
+const FEEDBACK_KEY = 'starfall.feedback.v1';
+let feedbackKind = 'bug';
+let feedbackText = '';
+
+function loadFeedbackLog() {
+  try { return JSON.parse(localStorage.getItem(FEEDBACK_KEY) || '[]'); } catch { return []; }
+}
+function pushFeedbackLog(entry) {
+  try {
+    const log = loadFeedbackLog();
+    log.unshift(entry);
+    localStorage.setItem(FEEDBACK_KEY, JSON.stringify(log.slice(0, 10)));
+  } catch { /* 隐私模式忽略 */ }
+}
+
+/** 自动附加的诊断信息：玩家不用描述环境，我拿到就能复现 */
+function collectDiagnostics() {
+  const p = player, g = G;
+  const up = Object.entries(meta.up || {}).map(([k, v]) => k + v).join(' ') || '无';
+  const build = p.weapons.map(w => `${WEAPONS[w.id].name} Lv${w.lv}`).join(' · ') || '无';
+  const mods = MODULES.filter(m => p.mods[m.id]).map(m => m.name).join(' · ') || '无';
+  return [
+    `版本 ${VERSION}`,
+    `机体 ${p.shipName || '?'} · 存活 ${fmtTime(g.t)} · 第 ${g.wave} 波 · 等级 ${p.level}(${mkName(p.level)}) · 击毁 ${p.kills}`,
+    `生命 ${Math.round(p.hp)}/${Math.round(p.maxHp)} · 减伤 ${(p.dr * 100).toFixed(0)}% · 伤害 ×${p.dmgMul.toFixed(2)} · 冷却 ×${p.cdMul.toFixed(2)}`,
+    `构筑：${build}`,
+    `模组：${mods}`,
+    `局内信用点 ${Math.round(p.credits)} · 局外强化 ${up}`,
+    `视口 ${Math.round(viewW())}×${Math.round(viewH())} @${zoomTarget.toFixed(1)}× · 窗口 ${window.innerWidth}×${window.innerHeight} @${window.devicePixelRatio}x`
+  ].join('\n');
+}
+
+function feedbackBody() {
+  const kind = FEEDBACK_KINDS.find(k => k.id === feedbackKind) || FEEDBACK_KINDS[0];
+  const text = (feedbackText || '').trim() || '（没有填写描述）';
+  return `【${kind.tag}】\n\n${text}\n\n---\n以下为自动附加的诊断信息，请勿删除：\n${collectDiagnostics()}\nUA: ${navigator.userAgent}`;
+}
+
+function submitFeedback() {
+  const kind = FEEDBACK_KINDS.find(k => k.id === feedbackKind) || FEEDBACK_KINDS[0];
+  const body = feedbackBody();
+  const title = `[${kind.tag}] ` + ((feedbackText || '').trim().slice(0, 40).replace(/\s+/g, ' ') || '玩家反馈');
+  pushFeedbackLog({ t: Date.now(), kind: feedbackKind, text: feedbackText, diag: collectDiagnostics() });
+  const url = `${ISSUE_URL}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body.slice(0, 6000))}`;
+  window.open(url, '_blank', 'noopener');
+  showFeedbackSent('已在新标签页打开 GitHub 提交页 · 点「Submit new issue」即可发出');
+}
+
+function copyFeedback() {
+  const body = feedbackBody();
+  pushFeedbackLog({ t: Date.now(), kind: feedbackKind, text: feedbackText, diag: collectDiagnostics() });
+  const done = (ok) => showFeedbackSent(ok
+    ? '报告已复制到剪贴板 · 贴到群里 / 论坛 / 邮件都行'
+    : '复制被浏览器拦下了 · 请手动全选下面文本框里的内容复制');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(body).then(() => done(true), () => done(false));
+  } else done(false);
+}
+
+/** 提交后的确认（复用面板：给玩家看到"发出去了什么"） */
+function showFeedbackSent(msg) {
+  panel.innerHTML = `<h2>意见已就绪</h2>
+    <p class="sub">${msg}</p>
+    <p class="sub">报告内容预览（已含诊断信息）：</p>
+    <textarea id="fbPreview" readonly rows="10">${feedbackBody().replace(/</g, '&lt;')}</textarea>
+    <button class="btn" id="fbAgain">再写一条</button>
+    <button class="btn alt" id="fbClose">返回</button>`;
+  overlay.classList.add('show');
+  const pv = document.getElementById('fbPreview');
+  if (pv) pv.onclick = () => pv.select();
+  document.getElementById('fbAgain').onclick = () => { feedbackText = ''; showFeedback(); };
+  document.getElementById('fbClose').onclick = closePanel;
+}
+
+/** 反馈面板：三个入口共用（暂停面板 / 结算面板 / 战场角落按钮） */
+function showFeedback(prefill) {
+  G.paused = true;
+  currentOptions = null;
+  panel._shipPick = null;
+  panelMode = 'feedback';
+  if (prefill !== undefined) feedbackText = prefill;
+  const chips = FEEDBACK_KINDS.map(k =>
+    `<button class="chip${k.id === feedbackKind ? ' on' : ''}" data-kind="${k.id}">${k.name}</button>`).join('');
+  panel.innerHTML = `<h2>意见收集 // v${VERSION}</h2>
+    <p class="sub">选一个分类、写几句就行 —— 描述会自动附带诊断信息（机型 / 波次 / 构筑 / 浏览器），你不用手打环境</p>
+    <div class="chips">${chips}</div>
+    <textarea id="fbText" rows="5" maxlength="600" placeholder="例如：第 20 波之后弹幕太密看不清 / 天基炮经常打空 / 想要 XX 武器……">${feedbackText.replace(/</g, '&lt;')}</textarea>
+    <p class="sub fbdiag">随附诊断：${collectDiagnostics().split('\n')[1] || ''}</p>
+    <button class="btn" id="fbGit">提交到 GitHub</button>
+    <button class="btn alt" id="fbCopy">复制报告</button>
+    <button class="btn alt" id="fbCancel">返回</button>
+    <p class="sub fblog">本地也留了一份（最近 ${loadFeedbackLog().length} 条）· 没有后端，所以走 GitHub 或剪贴板</p>`;
+  overlay.classList.add('show');
+  panel.querySelectorAll('.chip').forEach(el => {
+    el.onclick = () => { feedbackKind = el.dataset.kind; if (fbSaveText()) showFeedback(); };
+  });
+  document.getElementById('fbGit').onclick = () => { if (fbSaveText()) submitFeedback(); };
+  document.getElementById('fbCopy').onclick = () => { if (fbSaveText()) copyFeedback(); };
+  document.getElementById('fbCancel').onclick = closePanel;
+}
+
+/** 面板重绘/关闭前把文本框里的内容收进状态（否则切分类会把玩家写的东西弄丢） */
+function fbSaveText() {
+  const el = document.getElementById('fbText');
+  if (el) feedbackText = el.value;
+  return true;
+}
+
+/** 通用关闭：回到暂停或继续游戏 */
+function closePanel() {
+  overlay.classList.remove('show');
+  panelMode = null;
   G.paused = !!pausedManual;
   currentOptions = null;
   if (pausedManual) pauseEl.classList.remove('hidden');
@@ -991,6 +1134,7 @@ function closeShop() {
 function showMeta() {
   G.paused = true;
   panel._shipPick = null;
+  panelMode = 'meta';
   const up = META_UPGRADES.map(u => {
     const lv = meta.up[u.id] || 0;
     const maxed = lv >= u.maxLv;

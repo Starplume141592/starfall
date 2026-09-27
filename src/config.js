@@ -353,6 +353,20 @@ export const ZONE = { telegraph: 1.2, r: 96, life: 0.35, dmgMul: 1.6, max: 8 };
 /** 炮塔机弹丸 */
 export const SHOOTER_BULLET = w => ({ spd: 200, r: 4, dmg: (5 + w * 0.5) * ENEMY_DMG_SCALE(w), life: 5, color: PALETTE.enemyBullet });
 
+/** 版本号：出现在反馈报告与"意见收集"面板里 —— 报 bug 时能一眼对上是哪个版本 */
+export const VERSION = '0.4.0';
+/** 反馈去向：公开仓库的 Issues（页面已开启，预填标题与正文） */
+export const REPO_URL = 'https://github.com/Starplume141592/starfall';
+export const ISSUE_URL = REPO_URL + '/issues/new';
+/** 反馈分类（按钮上的选项，会写进报告标题，方便我分类） */
+export const FEEDBACK_KINDS = [
+  { id: 'bug', name: 'Bug / 报错', tag: 'BUG' },
+  { id: 'balance', name: '难度失衡', tag: 'BALANCE' },
+  { id: 'idea', name: '建议 / 新点子', tag: 'IDEA' },
+  { id: 'feel', name: '手感 / 可读性', tag: 'FEEL' },
+  { id: 'other', name: '其他', tag: 'OTHER' }
+];
+
 /**
  * 局外永久强化（#17 元进度）：用局外信用点购买，效果**刻意保守** ——
  * 合计满级约 +25 生命 / +7.5% 伤害 / -4% 冷却 / +24 拾取 / +45 开局信用点。
