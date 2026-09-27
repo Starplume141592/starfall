@@ -335,7 +335,7 @@ export const PLAYER = { r: 8, hp: 150, pickupRange: 130, dmgMul: 1.3, cdMul: 0.9
 
 /** 数据残片：绿色菱形，与玩家的蓝、导弹/电弧的蓝白彻底区分 */
 export const ORB = { r: 3, color: PALETTE.orbBody, core: PALETTE.orbCore };
-export const ORB_AUTO_PICKUP = true;  // 【测试期】全图自动拾取：残片无条件飞向玩家
+export const ORB_AUTO_PICKUP = false; // 正式规则：只有进入拾取范围（pickupRange）的残片才会吸附
 export const ORB_PULL = 4200;         // 吸附加速度（锁定后恒定生效，绝不脱钩）
 export const ORB_PULL_CLOSE = 1.6;    // 越近额外加成的倍率
 export const ORB_DRAG = 0.90;         // 每帧阻尼（同 Demo 口径）

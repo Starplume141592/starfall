@@ -504,7 +504,10 @@ function hurtEnemy(e, dmg, kx, ky) {
     tryDropPickup(e.x, e.y, e);
 
     const total = e.exp;
-    const n = Math.min(Math.ceil(total * 1.5), 8);
+    /* 一只怪 1 颗残片（原版最多 8 颗）：自动拾取时代"碎片雨"只是好看，
+       关掉全图拾取后它会让战场几秒内堆到上限、而玩家物理上不可能走完 —— 等于把经验稀释掉。
+       精英/首领仍多爆几颗做手感（数量少，不影响可捡性）。 */
+    const n = (e.boss || e.elite) ? 4 : 1;
     const per = total / n;
     for (let i = 0; i < n; i++) {
       G.orbs.push({
@@ -647,6 +650,17 @@ function buildOptions() {
   if (player.weapons.length < 3 && !out.some(o => o.kind === 'newWeapon')) {
     const cands = pool.filter(o => o.kind === 'newWeapon');
     if (cands.length) out[Math.floor(Math.random() * out.length)] = cands[Math.floor(Math.random() * cands.length)];
+  }
+  /* 保底 2（Pity 2）：已有 ≥4 把武器却一把都没满级 —— 典型"雨露均沾"死法：
+     10 局里早死的那局正是 8 把武器分布 Lv1–4、没有一条主线，DPS 被摊薄到打不动波次。
+     此时强制替换一张卡为"强化已有武器"，把资源逼出一条主线。
+     与保底 1 的条件（武器 <3）互斥，因此不会互相覆盖。 */
+  if (player.weapons.length >= 4 && !out.some(o => o.kind === 'weaponUp')) {
+    const noMax = !player.weapons.some(w => w.lv >= (WEAPONS[w.id] ? WEAPONS[w.id].maxLv : 1));
+    if (noMax) {
+      const cands = pool.filter(o => o.kind === 'weaponUp');
+      if (cands.length) out[Math.floor(Math.random() * out.length)] = cands[Math.floor(Math.random() * cands.length)];
+    }
   }
   return out;
 }
@@ -1418,9 +1432,12 @@ function update(dt) {
     if (d < player.r + ORB_ABSORB_PAD) { G.orbs.splice(i, 1); gainExp(o.val); audio.pickup(); }
   }
 
-  /* 残片上限：击杀太快时残片会堆到几百个，既费性能又捡不完 —— 超限就清掉最远的 */
+  /* 残片上限：超出时把最远的那批「价值并入」最后一颗，而不是删掉 ——
+     删掉等于静默销毁经验（表现就是"等级涨得莫名慢"，玩家查不出原因）。 */
   if (G.orbs.length > ORB_MAX) {
     G.orbs.sort((a, b) => dist2(b, player) - dist2(a, player));
+    const keep = G.orbs[ORB_MAX - 1];
+    for (let i = ORB_MAX; i < G.orbs.length; i++) keep.val += G.orbs[i].val;
     G.orbs.length = ORB_MAX;
   }
 
@@ -1532,15 +1549,27 @@ function snapshot() {
   };
 }
 
-/** 自动走位机器人：12 方向势场，选「前方敌人最少 + 不撞墙」的方向（合格的风筝走位） */
+/** 自动走位机器人：12 方向势场，选「前方敌人最少 + 顺路捡碎片 + 不撞墙」的方向（合格的风筝走位） */
 function botStep() {
   const DIRS = 12;
   const PROBE = 260;
+  /* 顺路捡碎片：真人不会放着经验不捡，但也不会为了捡碎片往敌群里钻 ——
+     所以这项加分单独算、且封顶（封顶值 < 单个 boss 的威胁权重），危险方向仍然优先躲。 */
+  const ORB_SIGHT = 700, ORB_BONUS_CAP = 2.2;
+  const orbScore = new Array(DIRS).fill(0);
+  for (const o of G.orbs) {
+    const rx = o.x - player.x, ry = o.y - player.y;
+    const dist = Math.hypot(rx, ry);
+    if (dist > ORB_SIGHT) continue;
+    const idx = ((Math.round(Math.atan2(ry, rx) / (Math.PI * 2 / DIRS)) % DIRS) + DIRS) % DIRS;
+    orbScore[idx] += (1 - dist / ORB_SIGHT) * 1.6;
+  }
   let bestScore = -Infinity, bx = 0, by = 1;
   for (let i = 0; i < DIRS; i++) {
     const a = i * Math.PI * 2 / DIRS;
     const dx = Math.cos(a), dy = Math.sin(a);
     let score = Math.random() * 0.05;                 // 加一点抖动，避免两方向等分时抖动卡死
+    score += Math.min(ORB_BONUS_CAP, orbScore[i]);
     forEachNear(player.x + dx * PROBE * 0.5, player.y + dy * PROBE * 0.5, PROBE * 0.8, (e) => {
       const rx = e.x - player.x, ry = e.y - player.y;
       const dot = rx * dx + ry * dy;
@@ -1622,8 +1651,8 @@ window.__game = {
   killSelf() { damagePlayer(1e9); },
   /** 调试用：直接给经验（可指定目标等级），用于快速验证升级卡池构成 */
   grantExp(n = 1) { gainExp(Math.max(1, Math.round(n * expNeed(player.level)))); return player.level; },
-  /** 调试用：当前这一次升级面板里的候选卡名 */
-  get options() { return currentOptions ? currentOptions.map(o => o.name) : null; },
+  /** 调试用：当前这一次升级面板里的候选卡（名称 + 类型），用于验证卡池构成与保底 */
+  get options() { return currentOptions ? currentOptions.map(o => o.name + ':' + o.kind) : null; },
   get pausedManual() { return pausedManual; },
   /** 镜头高度：zoom<1 拉高（看得更远），>1 推近。setZoom 会写 localStorage */
   get zoom() { return zoom; },

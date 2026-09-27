@@ -437,11 +437,13 @@ export function render(ctx, S) {
   }
   ctx.globalAlpha = 1;
 
-  /* 数据残片：绿色菱形，和玩家的蓝、弹幕的蓝白彻底区分 */
+  /* 数据残片：绿色菱形，和玩家的蓝、弹幕的蓝白彻底区分。
+     大小随价值缓慢增长（合并进来的经验要看得见，否则"大残片"只是看不见的账）。 */
   for (const o of G.orbs) {
     if (!cull(o.x, o.y, 40)) continue;
-    const s = o.r + 3;
-    drawGlow(ctx, o.x, o.y, ORB.color, 13, o.locked ? 0.95 : 0.72);
+    const grow = Math.min(1.9, 1 + Math.log2(1 + o.val / 2.5) * 0.22);
+    const s = (o.r + 3) * grow;
+    drawGlow(ctx, o.x, o.y, ORB.color, 13 * grow, o.locked ? 0.95 : 0.72);
     ctx.save();
     ctx.translate(o.x, o.y);
     ctx.rotate(Math.PI / 4);
