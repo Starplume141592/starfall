@@ -201,6 +201,27 @@ canvas {
   color: #7ea6cc;
 }
 
+/* 缩放浮层提示（手机捏合 / 滚轮 / −= 键）：只在缩放时出现 1 秒，
+   这样"视角"就不需要在左上角常年占位置 */
+#zoomToast {
+  position: absolute;
+  left: 50%;
+  top: 58px;
+  transform: translateX(-50%);
+  z-index: 225;
+  padding: 4px 12px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: #9ec9ff;
+  background: rgba(8, 16, 28, 0.72);
+  border: 1px solid rgba(88, 166, 255, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s;
+}
+#zoomToast.show { opacity: 1; }
+body.mobile #zoomToast { top: 46px; font-size: 11px; }
+
 /* 遥测读数行 */
 #stats {
   position: relative;

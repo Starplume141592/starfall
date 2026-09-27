@@ -88,10 +88,26 @@ const viewW = () => W / zoom;
 const viewH = () => H / zoom;
 
 function setZoom(z) {
-  zoomTarget = clamp(z, VIEW_ZOOM.min, VIEW_ZOOM.max);
+  const next = clamp(z, VIEW_ZOOM.min, VIEW_ZOOM.max);
+  const changed = Math.abs(next - zoomTarget) > 0.005;
+  zoomTarget = next;
   try { localStorage.setItem(ZOOM_KEY, String(zoomTarget)); } catch { /* 隐私模式忽略 */ }
+  /* 手机上"视角"读数常年占着左上角（玩家反馈过面板太大，我把它藏了），
+     所以改用一条 1 秒的浮层提示：只有真的在缩放时才出现。 */
+  if (changed && booted) showZoomToast();
 }
 function nudgeZoom(dir) { setZoom(zoomTarget + dir * VIEW_ZOOM.step); }
+
+/* 缩放浮层提示：显示 1 秒后淡出。手机捏合 / 桌面滚轮 / −= 键都会触发 */
+let zoomToastTimer = 0;
+function showZoomToast() {
+  const el = document.getElementById('zoomToast');
+  if (!el) return;
+  el.textContent = `视角 ${zoomTarget.toFixed(1)}×`;
+  el.classList.add('show');
+  clearTimeout(zoomToastTimer);
+  zoomToastTimer = setTimeout(() => el.classList.remove('show'), 1000);
+}
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -395,7 +411,12 @@ function releaseInput() {
   if (player && player.touch) {
     player.touch.active = false;
     player.touch.dx = 0; player.touch.dy = 0;
+    player.touch.len = 0; player.touch.mag = 0;
+    player.touch.mode = null;
   }
+  /* 失焦时手指不会派发 touchend：捏合状态与手指表必须一起清，否则回来时缩放会乱跳 */
+  activeTouches.clear();
+  pinchStart = null;
 }
 function onLoseFocus() {
   releaseInput();
@@ -416,31 +437,60 @@ window.addEventListener('keyup', e => { keys[e.code] = false; });
    手机上的"推杆幅度"映射成速度 —— 键盘是数字量（走/不走），触摸是模拟量（慢慢挪/全速冲），
    这对躲避弹幕很关键：贴边微调时全速冲会直接撞上去。 */
 const TOUCH_DEAD = 12, TOUCH_FULL = 76;
+/** 当前按在画布上的手指（identifier -> 逻辑坐标）。两指捏合要用它算指距 */
+const activeTouches = new Map();
+/** 捏合起始状态：{ dist, zoom } */
+let pinchStart = null;
+
+function touchDist() {
+  const it = [...activeTouches.values()];
+  if (it.length < 2) return 0;
+  return Math.hypot(it[0].x - it[1].x, it[0].y - it[1].y) || 1;
+}
+/** 两指捏合 = 缩放镜头（手机没有滚轮，也没有 -/= 键 —— 不提供这个手势的话，手机上根本调不了视角）。
+ *  与摇杆的关系：第二根手指落下时**放弃摇杆**（角色停住），避免"想缩放结果人物跑飞"。 */
+function beginPinch() {
+  pinchStart = { dist: touchDist(), zoom: zoomTarget };
+  player.touch.active = false; player.touch.id = null;
+  player.touch.dx = 0; player.touch.dy = 0; player.touch.len = 0; player.touch.mag = 0;
+  player.touch.mode = 'pinch';
+}
+function updatePinch() {
+  if (!pinchStart) return;
+  const d = touchDist();
+  if (d <= 0) return;
+  const next = clamp(pinchStart.zoom * (d / pinchStart.dist), VIEW_ZOOM.min, VIEW_ZOOM.max);
+  if (Math.abs(next - zoomTarget) > 0.005) setZoom(next);
+}
 
 canvas.addEventListener('touchstart', e => {
   e.preventDefault(); if (!player) return;
   audio.unlock();
-  /* 多指防护：摇杆已经激活时，第二根手指落下**不能**抢走摇杆 ——
-     否则把手指挪到右边按钮的路上（或只是手掌边缘碰到屏幕）会让角色瞬间转向。
-     多指只在"没在拖动"时接受第一次按下。 */
+  if (e.changedTouches) for (const t of e.changedTouches) activeTouches.set(t.identifier, toLocal(t.clientX, t.clientY));
+  /* 第二根手指落下 = 捏合缩放。此时必须放弃摇杆，否则缩放的同时角色会朝两指中间跑 */
+  if (activeTouches.size >= 2) { beginPinch(); return; }
+  /* 单指：多指防护 —— 摇杆已经激活时不重复接管（手掌边缘碰到屏幕不该让角色转向） */
   if (player.touch.active) return;
   const t = e.changedTouches && e.changedTouches[0]; if (!t) return;
   const p = toLocal(t.clientX, t.clientY);
-  player.touch.active = true; player.touch.id = t.identifier;
+  player.touch.active = true; player.touch.id = t.identifier; player.touch.mode = 'stick';
   player.touch.sx = p.x; player.touch.sy = p.y;
   player.touch.dx = 0; player.touch.dy = 0;
   player.touch.len = 0; player.touch.mag = 0;
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
-  e.preventDefault(); if (!player || !player.touch.active) return;
-  let t = null;
-  if (e.changedTouches) {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      if (e.changedTouches[i].identifier === player.touch.id) { t = e.changedTouches[i]; break; }
-    }
+  e.preventDefault(); if (!player) return;
+  if (e.changedTouches) for (const t of e.changedTouches) {
+    if (activeTouches.has(t.identifier)) activeTouches.set(t.identifier, toLocal(t.clientX, t.clientY));
   }
-  if (!t) return;
-  const p = toLocal(t.clientX, t.clientY);
+  if (player.touch.mode === 'pinch') {
+    if (activeTouches.size >= 2) updatePinch();
+    else { pinchStart = null; player.touch.mode = null; }   // 松开一根手指就结束捏合，不回到摇杆
+    return;
+  }
+  if (!player.touch.active) return;
+  const p = activeTouches.get(player.touch.id);
+  if (!p) return;
   const dx = p.x - player.touch.sx, dy = p.y - player.touch.sy;
   const len = Math.hypot(dx, dy);
   if (len > TOUCH_DEAD) {
@@ -452,6 +502,13 @@ canvas.addEventListener('touchmove', e => {
 }, { passive: false });
 function endTouch(e) {
   e.preventDefault(); if (!player) return;
+  if (e.changedTouches) for (const t of e.changedTouches) activeTouches.delete(t.identifier);
+  /* 捏合松开：结束时要求全部手指抬起才复位，避免三指乱按时状态错乱 */
+  if (player.touch.mode === 'pinch') {
+    if (activeTouches.size < 2) { pinchStart = null; player.touch.mode = null; }
+    if (activeTouches.size === 0) player.touch.mode = null;
+    return;
+  }
   player.touch.active = false; player.touch.dx = 0; player.touch.dy = 0;
   player.touch.id = null; player.touch.len = 0; player.touch.mag = 0;
 }
