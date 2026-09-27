@@ -609,6 +609,11 @@ function buildFallbackOptions() {
 /** 普通装备池：武器（强化 / 新增）+ 属性（各自有上限） */
 function buildOptions() {
   const pool = [];
+  /* 保底 2（Pity 2）做成"加权"而不是"强制替换一张卡"：
+     强制替换会挤掉 1/3 的选择多样性，实测（贪心机器人）会把资源全推给武器、完全不买生存，
+     反而更容易在首个精英墙崩掉。加权既保留玩家的选择，又把池子导向"练一条主线"。 */
+  const unmaxed = player.weapons.filter(w => w.lv < (WEAPONS[w.id] ? WEAPONS[w.id].maxLv : 1)).length;
+  const focusBoost = (player.weapons.length >= 4 && unmaxed === player.weapons.length) ? 2.5 : 1;
   for (const id in WEAPONS) {
     const def = WEAPONS[id];
     const owned = player.weapons.find(w => w.id === id);
@@ -617,7 +622,7 @@ function buildOptions() {
         const lv = owned.lv + 1;
         pool.push({
           kind: 'weaponUp', name: def.name, icon: def.icon, iid: id, icolor: def.color,
-          w: 2.2, tag: def.tag || `强化 Lv.${owned.lv} → Lv.${lv}`,
+          w: 2.2 * focusBoost, tag: def.tag || `强化 Lv.${owned.lv} → Lv.${lv}`,
           range: weaponRange(id, lv), rangeMax: MAX_WEAPON_RANGE,
           desc: def.desc(lv), apply: () => { owned.lv = lv; }
         });
@@ -651,17 +656,7 @@ function buildOptions() {
     const cands = pool.filter(o => o.kind === 'newWeapon');
     if (cands.length) out[Math.floor(Math.random() * out.length)] = cands[Math.floor(Math.random() * cands.length)];
   }
-  /* 保底 2（Pity 2）：已有 ≥4 把武器却一把都没满级 —— 典型"雨露均沾"死法：
-     10 局里早死的那局正是 8 把武器分布 Lv1–4、没有一条主线，DPS 被摊薄到打不动波次。
-     此时强制替换一张卡为"强化已有武器"，把资源逼出一条主线。
-     与保底 1 的条件（武器 <3）互斥，因此不会互相覆盖。 */
-  if (player.weapons.length >= 4 && !out.some(o => o.kind === 'weaponUp')) {
-    const noMax = !player.weapons.some(w => w.lv >= (WEAPONS[w.id] ? WEAPONS[w.id].maxLv : 1));
-    if (noMax) {
-      const cands = pool.filter(o => o.kind === 'weaponUp');
-      if (cands.length) out[Math.floor(Math.random() * out.length)] = cands[Math.floor(Math.random() * cands.length)];
-    }
-  }
+  /* 保底 2 已改为武器强化卡的权重加成（见 pool 构造处），不再强制替换卡位 */
   return out;
 }
 
@@ -1585,6 +1580,9 @@ function botStep() {
   keys.KeyW = by < -0.35; keys.KeyS = by > 0.35;
 }
 
+/** 生存向属性卡：机器人判断"该补防御了吗"时用（与 config 的 STATS id 对应） */
+const DEF_STATS = new Set(['hp', 'hpPct', 'armor', 'heal', 'vamp']);
+
 /** 模拟用「像人一样选」的策略：优先新武器 → 升最弱的武器 → 属性 → 模组 */
 function smartPick(opts) {
   const score = (o) => {
@@ -1592,7 +1590,14 @@ function smartPick(opts) {
       case 'module': return 120;
       case 'newWeapon': return player.weapons.length < 5 ? 110 : 40;
       case 'weaponUp': return 90;
-      case 'stat': return 60;
+      case 'stat': {
+        /* 像人一样地买生存：血量/减伤明显落后时优先买防御卡。
+           原策略永远不买（属性恒 60 分 < 武器 90 分），于是测出一堆
+           "24 级还是 150 血 / 0 减伤"的假早死 —— 那是机器人不会玩，不是游戏问题。 */
+        const lag = player.maxHp < 260 || player.dr < 0.2;
+        if (lag && player.level > 12 && DEF_STATS.has(o.iid)) return 95;
+        return 60;
+      }
       default: return 5;
     }
   };

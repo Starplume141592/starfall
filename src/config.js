@@ -201,7 +201,7 @@ export const MODULES = [
  * 后段：w>25 起额外递增 —— 玩家战力在 5–7 分钟见顶，靠这段递增在 10–14 分钟越过它形成终局，
  *       否则满配玩家会无限无伤刷下去（实测过的真实问题）。
  */
-export const ENEMY_SCALE = w => (1 + w * 0.135 + w * w * 0.0014) * (1 + Math.max(0, w - 25) * 0.125);
+export const ENEMY_SCALE = w => (1 + w * 0.135 + w * w * 0.0014) * (1 + Math.max(0, w - 25) * 0.16);
 export const ENEMY_DMG_SCALE = w => 1 + w * 0.035;
 
 /**
