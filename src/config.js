@@ -123,6 +123,18 @@ export const WEAPONS = {
     bulletSpeed: 780, range: 180, bulletR: 3, spread: 0.8, knock: 7,
     tag: '代价',
     desc: lv => `扇形喷射 ${5 + N(lv)} 弹丸，单发 ${Math.round(34 + L(lv) * 20)}，射程极短但击退极强`
+  },
+  /* 天基炮：唯一的"延迟打击"武器 —— 先在地面画落点，0.85 秒后从天上砸下来。
+     它不是"更快更疼的直线弹"，而是一把需要预判（或配合控场）的重锤：
+     打移动目标会空，打被减速/被挤成一团的敌群则一发清场。 */
+  orbital: {
+    mode: 'orbital', name: '天基炮', icon: '🛰️', color: '#FFD166', maxLv: 7,
+    dmg: lv => 130 + L(lv) * 95,
+    cd: lv => Math.max(3.0, 6.6 - (L(lv) - 1) * 0.85),
+    strikes: lv => (lv >= 7 ? 2 : 1),
+    radius: lv => 92 + L(lv) * 13,
+    range: 720, telegraph: 0.85,
+    desc: lv => `标记战场目标，0.85 秒后轨道打击落下：半径 ${Math.round(92 + L(lv) * 13)} 内 ${Math.round(130 + L(lv) * 95)} 伤害${lv >= 7 ? '（双重打击）' : ''}`
   }
 };
 

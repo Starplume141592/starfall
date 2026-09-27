@@ -398,7 +398,7 @@ function spawnZones(cx, cy, n, dmg) {
     G.zones.push({
       x: clamp(cx + Math.cos(a) * dist, 20, WORLD.w - 20),
       y: clamp(cy + Math.sin(a) * dist, 20, WORLD.h - 20),
-      r: ZONE.r, t: ZONE.telegraph, dmg, fired: false, life: 0
+      r: ZONE.r, t: ZONE.telegraph, telegraph: ZONE.telegraph, dmg, fired: false, life: 0
     });
   }
 }
@@ -814,6 +814,31 @@ function updateWeapons(dt) {
             });
           }
         } else w.t = 0.08;
+      }
+    }
+
+    /* 天基炮：标记落点 → 延迟重击（唯一的延迟打击武器，需要用预判或控场来兑现） */
+    else if (def.mode === 'orbital') {
+      w.t -= dt;
+      if (w.t <= 0) {
+        const tgts = nearestEnemies(def.strikes(w.lv), def.range);
+        if (tgts.length) {
+          w.t = def.cd(w.lv) * player.cdMul;
+          audio.warn();
+          for (const t of tgts) {
+            /* 落点按"目标正朝玩家移动"的已知行为做前置于 0.85 秒：既让这一发真的能打中，
+               也保留甩开的可能（突袭机会冲刺、狙击机不贴身 -> 都会空）。 */
+            const dxp = player.x - t.x, dyp = player.y - t.y;
+            const dd = Math.hypot(dxp, dyp) || 1;
+            const lead = (t.speed || 0) * def.telegraph;
+            G.zones.push({
+              x: clamp(t.x + dxp / dd * lead, 20, WORLD.w - 20),
+              y: clamp(t.y + dyp / dd * lead, 20, WORLD.h - 20),
+              r: def.radius(w.lv), t: def.telegraph, telegraph: def.telegraph, dmg,
+              fired: false, life: 0, ally: true, color: def.color, knock: 300
+            });
+          }
+        } else w.t = 0.1;
       }
     }
 
@@ -1622,15 +1647,29 @@ function update(dt) {
       z.t -= dt;
       if (z.t <= 0) {
         z.fired = true; z.life = ZONE.life;
-        const dx = player.x - z.x, dy = player.y - z.y;
-        const d = Math.hypot(dx, dy) || 1;
-        if (d < z.r + player.r) {
-          damagePlayer(z.dmg, 'zone');
-          player.vx += dx / d * 260; player.vy += dy / d * 260;    // 炸飞，给一个"被推走"的反馈
+        if (z.ally) {
+          /* 天基炮：己方打击 —— 只伤敌人，并给一发强击退（砸下去得有"重锤"的物理感） */
+          forEachNear(z.x, z.y, z.r + 24, (e) => {
+            if (e.dead) return;
+            const ex = e.x - z.x, ey = e.y - z.y;
+            const ed = Math.hypot(ex, ey) || 1;
+            if (ed < z.r + e.r) hurtEnemy(e, z.dmg, ex / ed * z.knock, ey / ed * z.knock);
+          });
+          burst(z.x, z.y, z.color, 34, 520);
+          shake = Math.max(shake, 12);
+          flash(.14, '255,209,102');
+          G.rings.push({ x: z.x, y: z.y, r: z.r * 0.4, max: z.r * 1.6, age: 0, life: 0.38, color: z.color });
+        } else {
+          const dx = player.x - z.x, dy = player.y - z.y;
+          const d = Math.hypot(dx, dy) || 1;
+          if (d < z.r + player.r) {
+            damagePlayer(z.dmg, 'zone');
+            player.vx += dx / d * 260; player.vy += dy / d * 260;    // 炸飞，给一个"被推走"的反馈
+          }
+          burst(z.x, z.y, '#f06595', 26, 380);
+          shake = Math.max(shake, 9);
+          flash(.16, '240,101,149');
         }
-        burst(z.x, z.y, '#f06595', 26, 380);
-        shake = Math.max(shake, 9);
-        flash(.16, '240,101,149');
       }
     } else {
       z.life -= dt;

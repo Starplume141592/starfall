@@ -5,6 +5,7 @@
 // 用法: node bench/weapons-check.mjs
 const cfg = await import('../src/config.js');
 const { WEAPONS } = cfg;
+const m = cfg;
 
 // 旧公式（5 级版本），仅用于比对
 const OLD = {
@@ -17,7 +18,9 @@ const OLD = {
   boomerang: { maxLv: 5, dmg: 24 + 5 * 14, num: 1 + Math.floor(5 / 2), cd: Math.max(0.5, 1.8 - 4 * 0.22) },
   overload: { maxLv: 5, dmg: 70 + 5 * 40, num: 2 + 5, selfDps: 1.2 + 5 * 0.3, cd: Math.max(0.25, 0.85 - 4 * 0.1) },
   nanoswarm: { maxLv: 5, dmg: 9 + 5 * 4, num: 3 + 5 * 2, heal: 1 + 5 * 0.6, cd: Math.max(0.12, 0.45 - 4 * 0.07) },
-  flak: { maxLv: 5, dmg: 34 + 5 * 20, pellets: 5 + 5, cd: Math.max(0.5, 1.5 - 4 * 0.2) }
+  flak: { maxLv: 5, dmg: 34 + 5 * 20, pellets: 5 + 5, cd: Math.max(0.5, 1.5 - 4 * 0.2) },
+  /* 天基炮是本次新增武器，没有"旧 5 级"参照物：只做单调性/上限检查（见下面的 opt 分支） */
+  orbital: { maxLv: 5 }
 };
 
 const NEW_MAX = 7;
@@ -36,6 +39,13 @@ for (const id of Object.keys(WEAPONS)) {
   const w = WEAPONS[id], o = OLD[id];
   console.log(`[${id}] maxLv ${o.maxLv} -> ${w.maxLv}`);
   if (w.maxLv !== NEW_MAX) { fails++; console.log('  ✗ maxLv 不是 7'); }
+  if (id === 'orbital') {
+    /* 新增武器：没有旧值可比，只检查"满级更强"这条底线 */
+    row(id, 'dmg 单调', Math.round(w.dmg(7)), '>=' + Math.round(w.dmg(6)), w.dmg(7) > w.dmg(6));
+    row(id, 'cd 递减', +w.cd(7).toFixed(2), '<=' + +w.cd(6).toFixed(2), w.cd(7) <= w.cd(6));
+    row(id, 'range>0', m.weaponRange(id, 7), '>0', m.weaponRange(id, 7) > 0);
+    continue;
+  }
   if (w.dmg) cmp(id, 'dmg', Math.round(w.dmg(NEW_MAX)), o.dmg, 0.51);
   if (w.num) cmp(id, 'num', w.num(NEW_MAX), o.num, 0.001);
   if (w.pellets) cmp(id, 'pellets', w.pellets(NEW_MAX), o.pellets, 0.001);
@@ -49,8 +59,9 @@ for (const id of Object.keys(WEAPONS)) {
 
 console.log('\n=== 铺满时间预估（每把武器要抽的次数）===');
 let total = 0;
+const nWeapons = Object.keys(WEAPONS).length;
 for (const id of Object.keys(WEAPONS)) total += WEAPONS[id].maxLv - 1;
-console.log(`  10 把武器全部练满需要 ${total} 次武器选择（旧版 ${10 * 4} 次）`);
+console.log(`  ${nWeapons} 把武器全部练满需要 ${total} 次武器选择（旧版 ${10 * 4} 次 / 10 把）`);
 const statPicks = 45, modulePicks = 6;
 console.log(`  池子总量：武器 ${total} + 属性 ${statPicks} + 模组 ${modulePicks} = ${total + statPicks + modulePicks} 次`);
 console.log(`  一局约能拿到 62 次选择（改后实测终局等级）→ 想全练满是做不到的，必须挑`);
