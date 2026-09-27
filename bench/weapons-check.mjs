@@ -62,7 +62,7 @@ let total = 0;
 const nWeapons = Object.keys(WEAPONS).length;
 for (const id of Object.keys(WEAPONS)) total += WEAPONS[id].maxLv - 1;
 console.log(`  ${nWeapons} 把武器全部练满需要 ${total} 次武器选择（旧版 ${10 * 4} 次 / 10 把）`);
-const statPicks = 45, modulePicks = 6;
+const statPicks = cfg.STATS.reduce((a, s) => a + s.maxLevel, 0), modulePicks = cfg.MODULES.length;
 console.log(`  池子总量：武器 ${total} + 属性 ${statPicks} + 模组 ${modulePicks} = ${total + statPicks + modulePicks} 次`);
 console.log(`  一局约能拿到 62 次选择（改后实测终局等级）→ 想全练满是做不到的，必须挑`);
 

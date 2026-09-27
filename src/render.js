@@ -280,6 +280,16 @@ function paintUnit(g, type, r, fill, edge, core) {
   } else if (type === 'shooter') {
     poly(g, 0, 0, r, 6, 0); g.fill(); g.stroke();
     g.fillStyle = core; g.fillRect(r * 0.2, -r * 0.18, r * 1.05, r * 0.36);   // 炮口
+  } else if (type === 'sniper') {
+    /* 狙击机：细长身 + 两根前伸的支架 + 一根**明显的长炮管**。
+       它是要"一眼在混战里找到"的威胁（预警激光的载体），旧版落到默认分支、
+       长得和巡逻机一样、颜色也和炮塔机相同 —— 玩家只能靠预警线倒推是谁在瞄他。 */
+    g.beginPath();
+    g.moveTo(r * 0.9, 0); g.lineTo(-r * 0.7, -r * 0.62); g.lineTo(-r * 1.1, 0); g.lineTo(-r * 0.7, r * 0.62);
+    g.closePath(); g.fill(); g.stroke();
+    g.beginPath(); g.moveTo(r * 0.3, -r * 0.5); g.lineTo(r * 1.9, -r * 0.22);      // 支架
+    g.moveTo(r * 0.3, r * 0.5); g.lineTo(r * 1.9, r * 0.22); g.stroke();
+    g.fillStyle = core; g.fillRect(r * 0.4, -r * 0.14, r * 2.0, r * 0.28);        // 炮管
   } else if (type === 'fast') {
     g.beginPath();
     g.moveTo(r * 1.6, 0); g.lineTo(-r * 0.5, -r * 0.78); g.lineTo(-r * 1.05, 0); g.lineTo(-r * 0.5, r * 0.78);
@@ -844,17 +854,6 @@ export function render(ctx, S) {
   ctx.globalAlpha = 1;
 
   ctx.restore();
-
-  /* 屏幕空间：触屏摇杆 */
-  if (player.touch.active) {
-    const sx = player.touch.sx, sy = player.touch.sy;
-    const dx = player.touch.dx * 40, dy = player.touch.dy * 40;
-    ctx.globalAlpha = 0.2; ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(sx, sy, 48, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 0.65; ctx.fillStyle = PALETTE.playerRing;
-    ctx.beginPath(); ctx.arc(sx + dx, sy + dy, 20, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 1;
-  }
 
   /* 屏幕空间：小地图 */
   drawMinimap(ctx, S, cx, cy, vw, vh);

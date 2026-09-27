@@ -32,7 +32,7 @@ function saveBest(r) {
 
 /* ==================== 局外存档（元进度） ====================
    设计原则：**元进度只能"略微降低开局难度"，不能替代单局决策**。
-   所以永久强化的总量被压得很小（合计约 +20 生命、+6% 伤害、+4% 冷却），
+   所以永久强化的总量被压得很小（合计约 +25 生命、+7.5% 伤害、-4% 冷却），
    而且越买越贵 —— 它的作用是"给反复游玩的玩家一点确定性的回报和短期目标"，
    不是"练满之后本作就变成无脑游戏"。 */
 const META_KEY = 'starfall.meta.v1';
@@ -119,10 +119,6 @@ function resize() {
   canvas.width = Math.round(cssW * DPR);
   canvas.height = Math.round(cssH * DPR);
   ctx.setTransform(DPR * scale, 0, 0, DPR * scale, 0, 0);
-  /* 移动端 UI 缩放：地形/单位是固定逻辑分辨率，但 HUD 与面板是 CSS 像素 ——
-     手机上 stage 被缩到很小，固定 px 的字会小到看不清。用 --ui 把 UI 反向放大补偿。 */
-  const uiScale = clamp(1 / Math.max(0.62, scale), 1, 1.35);
-  stage.style.setProperty('--ui', uiScale.toFixed(3));
   /* 首次 resize 发生在模块初始化阶段，那时 player/G 还在 TDZ（let 声明未执行）——
      所以只在"启动完成"之后才做朝向同步。 */
   if (booted) syncOrientation();
@@ -393,11 +389,14 @@ window.addEventListener('keydown', e => {
     const si = ['Digit1', 'Digit2', 'Digit3', 'Numpad1', 'Numpad2', 'Numpad3'].indexOf(e.code);
     if (si >= 0 && SHIPS[si]) { panel._shipPick(SHIPS[si].id); return; }
   }
-  // 装备终端开着时，1/2/3 直接选卡
+  /* 面板卡快捷键：普通升级是三选一，但**超频跃迁是四选一** ——
+     旧实现写死 `currentOptions[idx % 3]`，导致第 4 张模组卡键盘永远选不到（图鉴核对时发现）。
+     现在 1/2/3/4 直接对应卡位，越界就当没按。 */
   if (currentOptions) {
-    const idx = ['Digit1', 'Digit2', 'Digit3', 'Numpad1', 'Numpad2', 'Numpad3'].indexOf(e.code);
+    const keyRow = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4'];
+    const idx = keyRow.indexOf(e.code);
     if (idx >= 0) {
-      const opt = currentOptions[idx % 3];
+      const opt = currentOptions[idx % 4];   // 三选一时第 4 个不存在 -> 视为没按
       if (opt) chooseOption(opt);
     }
   }
@@ -807,7 +806,7 @@ function hurtEnemy(e, dmg, kx, ky) {
 
 function damagePlayer(dmg, src) {
   if (player.invuln > 0 || G.over) return;
-  /* 相位护盾模组：每 8 秒完全抵挡一次 */
+  /* 相位护盾模组：每 10 秒完全抵挡一次（与卡面文案一致） */
   if (player.shield && player.shieldCd <= 0) {
     player.shieldCd = 10;
     player.invuln = PLAYER.invuln;
@@ -1094,9 +1093,12 @@ function showShipSelect(silent) {
 }
 
 /* ==================== 局内商店（#16） ==================== */
-/** 价格随"本局买过几次"上涨（SHOP_INFLATE），所以它是一局内的资源分配题 */
+/** 价格随"本局买过几次"上涨（SHOP_INFLATE），所以它是一局内的资源分配题。
+ *  注意：只按**本局总购买次数**算 —— 早期版本写成 `本件次数 + 本局总次数`，
+ *  本件自己的次数被加了两次，于是"买同一件"实际每次 +70%，而面板上写着 +35%
+ *  （图鉴核对时发现的价格与文案不符）。 */
 function shopPrice(item) {
-  const bought = (player.shopBought[item.id] || 0) + (player.shopCount || 0);
+  const bought = player.shopCount || 0;
   return Math.round(item.base * (1 + bought * SHOP_INFLATE));
 }
 
@@ -1423,6 +1425,9 @@ function updateWeapons(dt) {
             const dxp = player.x - t.x, dyp = player.y - t.y;
             const dd = Math.hypot(dxp, dyp) || 1;
             const lead = (t.speed || 0) * def.telegraph;
+            /* 场上预警圈上限对己方打击同样生效（旧实现只在天基炮这里漏了检查，
+               壁垒者正在放圈时能超过 ZONE.max） */
+            if (G.zones.length >= ZONE.max) break;
             G.zones.push({
               x: clamp(t.x + dxp / dd * lead, 20, WORLD.w - 20),
               y: clamp(t.y + dyp / dd * lead, 20, WORLD.h - 20),
@@ -2080,7 +2085,8 @@ function update(dt) {
           e.state = 'stunned'; e.stateTime = 1.2; e.vulnMul = 2.2;   // 召唤后短暂虚弱
         }
       } else if (e.state === 'stunned') {
-        if (e.stateTime <= 0) { e.state = 'chase'; e.stateTime = 3.2; e.vulnMul = 1; }
+        /* 乘 cdMul：否则阶段变化里的"冷却缩短"对裂空者完全不生效（图鉴核对时发现） */
+        if (e.stateTime <= 0) { e.state = 'chase'; e.stateTime = 3.2 * e.cdMul; e.vulnMul = 1; }
       }
     }
     else if (e.boss) {
@@ -2145,7 +2151,7 @@ function update(dt) {
       else if (e.state === 'stunned') {
         if (e.stateTime <= 0) {
           e.state = 'chase';
-          e.stateTime = 3.0;
+          e.stateTime = 3.0 * e.cdMul;   // 同上：阶段缩短冷却必须真的生效
           e.vulnMul = 1;
           addText(e.x, e.y - 60, '重启', '#f06595', 16);
         }
