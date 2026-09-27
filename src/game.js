@@ -443,8 +443,9 @@ function hurtEnemy(e, dmg, kx, ky) {
     player.kills++;
     audio.kill();
 
-    /* 击杀回复（纳米虫群）—— 每秒最多回 5% 最大生命，否则后期每秒几十杀会变成无敌 */
-    let healOnKill = 0;
+    /* 击杀回复（纳米虫群 + 噬能涂层）—— 每秒最多回 5% 最大生命，
+       否则后期每秒几十杀会变成无敌。所有吸血途径都必须汇进这一条限速里。 */
+    let healOnKill = player.killHealFlat || 0;
     for (const w of player.weapons) {
       const d = WEAPONS[w.id];
       if (d.onKillHeal) healOnKill += d.onKillHeal(w.lv);
@@ -695,7 +696,12 @@ function showUpgrade() {
 function chooseOption(o) {
   if (!currentOptions) return;
   currentOptions = null;
-  o.apply(); pendingLevels--;
+  o.apply();
+  /* 防御：`pendingLevels` 一旦被减成负数，之后每次升级的 `pendingLevels++` 只会把它推回 0，
+     而 `showUpgrade()` 的条件是 `> 0` —— 那些等级就会**静默地不给面板**。
+     正常流程走不到这里（每张面板都有一次对应计数），但这类"计数错位"是会悄悄吃掉玩家选择的，
+     所以宁可在源头夹住。 */
+  pendingLevels = Math.max(0, pendingLevels - 1);
   if (pendingLevels > 0) showUpgrade();
   else { overlay.classList.remove('show'); G.paused = false; }
 }

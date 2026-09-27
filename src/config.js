@@ -149,7 +149,11 @@ export const STATS = [
   { id: 'heal', name: '维修', icon: '🧰', w: 1.4, maxLevel: 4, desc: '立刻回复 50 点生命', apply: p => { p.hp = Math.min(p.maxHp, p.hp + 50) } },
   { id: 'pick', name: '引力', icon: '🧲', w: 1.0, maxLevel: 4, desc: '拾取范围 +50（范围越大，残片拉速越快）', apply: p => { p.pickupRange += 50 } },
   { id: 'armor', name: '护盾', icon: '🔰', w: 1.5, maxLevel: 5, desc: '受到伤害 -10%（最高 -60%）', apply: p => { p.dr = Math.min(0.60, p.dr + 0.10) } },
-  { id: 'crit', name: '会心', icon: '🎯', w: 1.6, maxLevel: 5, desc: '暴击率 +10%（2 倍伤害）', apply: p => { p.crit += 0.10 } }
+  { id: 'crit', name: '会心', icon: '🎯', w: 1.6, maxLevel: 5, desc: '暴击率 +10%（2 倍伤害）', apply: p => { p.crit += 0.10 } },
+  /* 下面两条是为"生存成长途径太少"补的：
+     原版最大生命只能靠"装甲"（固定 +30/级，后期严重贬值），回血只有纳米虫群一把武器。 */
+  { id: 'hpPct', name: '强化基座', icon: '🔩', w: 1.8, maxLevel: 5, desc: '最大生命 +12%（按比例，后期不贬值），并回复等量', apply: p => { const add = Math.round(p.maxHp * 0.12); p.maxHp += add; p.hp = Math.min(p.maxHp, p.hp + add) } },
+  { id: 'vamp', name: '噬能涂层', icon: '🩸', w: 1.6, maxLevel: 5, desc: '每次击杀回复 0.6 生命（所有吸血共用每秒 5% 最大生命的上限）', apply: p => { p.killHealFlat = (p.killHealFlat || 0) + 0.6 } }
 ];
 
 /**
