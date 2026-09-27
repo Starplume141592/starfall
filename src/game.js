@@ -175,6 +175,8 @@ const elWave = document.getElementById('sWave');
 const elTime = document.getElementById('clockTime');     // 顶部正中：运行计时
 const elKill = document.getElementById('sKill');
 const elCredit = document.getElementById('sCredit');
+const elShopBtn = document.getElementById('shopBtn');
+const elShopCredits = document.getElementById('shopCredits');
 const elNext = document.getElementById('clockNext');      // 顶部正中：下一波倒计时
 const elZoom = document.getElementById('sZoom');
 const loadoutEl = document.getElementById('loadout');
@@ -189,6 +191,19 @@ document.getElementById('fbCorner').onclick = () => {
   if (G && G.over) return;              // 结算时用面板里的那个入口（这个按钮会被遮罩挡住）
   if (panelMode === 'ship') return;     // 开局菜单里也有自己的入口
   showFeedback();
+};
+/* 触摸专用按钮：手机没有键盘，B（补给）与 ESC（暂停）都按不到 ——
+   少了这两个按钮，手机端根本打不开商店、也暂停不了，那就谈不上"能玩"。 */
+document.getElementById('shopBtn').onclick = () => {
+  if (G && G.over) return;
+  if (panelMode === 'shop') closeShop();
+  else if (!currentOptions) { shopOpen = true; showShop(); }
+};
+document.getElementById('pauseBtn').onclick = () => {
+  if (G && G.over) return;
+  if (panelMode === 'shop') { closeShop(); return; }
+  if (panelMode === 'feedback') { closePanel(); return; }
+  if (!currentOptions) togglePause();
 };
 /* 画质手动选择（暂停面板里）：手机端帧率不够时框架会自动降级，
    但玩家想主动选低画质换帧率（或反过来）时必须有入口 —— 自动降级只该兜底，不该替玩家决定。 */
@@ -224,6 +239,18 @@ let currentOptions = null;
 let pausedManual = false;
 let pauseReason = '';                   // '' = 玩家手动，'blur' = 失焦自动暂停
 
+/**
+ * 同步两套"暂停"：
+ *   pausedManual —— 玩家自己按的暂停（ESC / 手机暂停按钮 / 失焦自动暂停）
+ *   G.paused     —— 有面板挡在前面（升级终端 / 商店 / 意见收集 / 开局菜单）
+ * 两套都必须一致，否则会出现"暂停解除了但 G.paused 永远是 true"：
+ * 主循环 `!G.paused` 直接把 update 卡死（表现为按键和摇杆全部失灵），
+ * 而且 `gainExp` 里 `!G.paused` 的判断会让升级面板再也不弹（升级被静默吞掉）。
+ */
+function syncPauseState() {
+  G.paused = pausedManual || !!currentOptions || !!panelMode;
+}
+
 function togglePause(force, reason) {
   if (G && G.over) return;
   pausedManual = force === undefined ? !pausedManual : !!force;
@@ -232,9 +259,16 @@ function togglePause(force, reason) {
   if (pausedManual && pauseTitleEl) {
     pauseTitleEl.textContent = pauseReason === 'blur' ? '窗口失焦 · 已暂停' : '已暂停';
   }
+  syncPauseState();
 }
 /* 点一下就继续：失焦回来时不用去猜该按哪个键 */
-pauseEl.addEventListener('click', () => { audio.unlock(); togglePause(false); });
+/* 暂停面板：点空白处 = 继续；点面板里的按钮 = 只执行按钮自己的事。
+   （不加这个判断的话，点「画质」或「意见收集」会顺带把游戏恢复了。） */
+pauseEl.addEventListener('click', e => {
+  audio.unlock();
+  if (e.target.closest('button')) return;
+  togglePause(false);
+});
 function syncMuteLabel() {
   if (muteStateEl) muteStateEl.textContent = audio.muted ? '关' : '开';
 }
@@ -386,6 +420,10 @@ const TOUCH_DEAD = 12, TOUCH_FULL = 76;
 canvas.addEventListener('touchstart', e => {
   e.preventDefault(); if (!player) return;
   audio.unlock();
+  /* 多指防护：摇杆已经激活时，第二根手指落下**不能**抢走摇杆 ——
+     否则把手指挪到右边按钮的路上（或只是手掌边缘碰到屏幕）会让角色瞬间转向。
+     多指只在"没在拖动"时接受第一次按下。 */
+  if (player.touch.active) return;
   const t = e.changedTouches && e.changedTouches[0]; if (!t) return;
   const p = toLocal(t.clientX, t.clientY);
   player.touch.active = true; player.touch.id = t.identifier;
@@ -874,7 +912,7 @@ function showUpgrade() {
   const opts = jump ? buildModuleOptions() : buildOptions();
   if (!opts.length) {                       // 池子抽干（全武器满级且属性全满）：不空转面板
     overlay.classList.remove('show');
-    G.paused = false;
+    syncPauseState();
     /* 退回这次升级，避免"升了级却一个都没选到"。若同时到账了多级，递归消化（每轮递减，必然收敛）。 */
     if (pendingLevels > 0) { pendingLevels--; if (pendingLevels > 0) showUpgrade(); }
     return;
@@ -912,7 +950,7 @@ function chooseOption(o) {
      所以宁可在源头夹住。 */
   pendingLevels = Math.max(0, pendingLevels - 1);
   if (pendingLevels > 0) showUpgrade();
-  else { overlay.classList.remove('show'); G.paused = false; }
+  else { overlay.classList.remove('show'); currentOptions = null; syncPauseState(); }
 }
 
 function gameOver() {
@@ -1021,8 +1059,9 @@ function buyItem(item) {
       /* 不能在这里直接开升级面板（那会叠在商店之上、且商店仍是"打开"状态）。
          正确做法：先关店恢复游戏，再给经验让它自然触发升级面板。 */
       shopOpen = false;
+      panelMode = null;
       overlay.classList.remove('show');
-      G.paused = !!pausedManual;
+      syncPauseState();
       gainExp(Math.round(player.expNext));
       return true;
     }
@@ -1045,6 +1084,7 @@ function showShop() {
   currentOptions = null;
   panel._shipPick = null;
   panelMode = 'shop';
+  pauseEl.classList.add('hidden');     // 同上：别让暂停层压住遮罩
   const rows = SHOP_ITEMS.map(it => {
     const price = shopPrice(it);
     const owned = it.once && player.shopBought[it.id];
@@ -1058,7 +1098,8 @@ function showShop() {
   }).join('');
   panel.innerHTML = `<h2>补给终端 // 信用点 ${Math.round(player.credits)}</h2>
     <p class="sub">信用点来自击毁精英与首领 · 每买一次全场涨价 ${Math.round(SHOP_INFLATE * 100)}% · 按 B 或 ESC 关闭</p>
-    <div id="cards">${rows}</div>`;
+    <div id="cards">${rows}</div>
+    <button class="btn alt" id="shopClose">返回战场</button>`;
   overlay.classList.add('show');
   panel.querySelectorAll('.card').forEach(el => {
     el.onclick = () => {
@@ -1069,14 +1110,18 @@ function showShop() {
       if (shopOpen) showShop();
     };
   });
+  /* 必须有关闭按钮：面板开着时遮罩会挡住右下角按钮，而手机上没有 ESC / B ——
+     只靠键盘退出的话，手机会卡在商店里出不来。 */
+  const sc = document.getElementById('shopClose');
+  if (sc) sc.onclick = closeShop;
 }
 
 function closeShop() {
   overlay.classList.remove('show');
   shopOpen = false;
   panelMode = null;
-  G.paused = !!pausedManual;
   currentOptions = null;
+  syncPauseState();
   if (pausedManual) pauseEl.classList.remove('hidden');
 }
 
@@ -1184,6 +1229,9 @@ function showFeedback(prefill) {
   currentOptions = null;
   panel._shipPick = null;
   panelMode = 'feedback';
+  /* 暂停面板的 z-index(320) 高于遮罩(300)：从暂停里打开任何面板时都必须先收起它，
+     否则它会压在新面板上面、把按钮全挡住（实测：意见面板的"返回"点不动）。 */
+  pauseEl.classList.add('hidden');
   if (prefill !== undefined) feedbackText = prefill;
   const chips = FEEDBACK_KINDS.map(k =>
     `<button class="chip${k.id === feedbackKind ? ' on' : ''}" data-kind="${k.id}">${k.name}</button>`).join('');
@@ -1218,8 +1266,8 @@ function fbSaveText() {
 function closePanel() {
   overlay.classList.remove('show');
   panelMode = null;
-  G.paused = !!pausedManual;
   currentOptions = null;
+  syncPauseState();
   if (pausedManual) pauseEl.classList.remove('hidden');
 }
 
@@ -1228,6 +1276,7 @@ function showMeta() {
   G.paused = true;
   panel._shipPick = null;
   panelMode = 'meta';
+  pauseEl.classList.add('hidden');
   const up = META_UPGRADES.map(u => {
     const lv = meta.up[u.id] || 0;
     const maxed = lv >= u.maxLv;
@@ -2313,6 +2362,12 @@ function updateHUD() {
   setText(elTime, 'time', fmtTime(G.t));
   setText(elKill, 'kill', player.kills);
   setText(elCredit, 'credit', Math.round(player.credits));
+  /* 触摸版补给按钮：数字实时更新 + 买得起时高亮（否则玩家不知道什么时候该去开商店） */
+  if (elShopCredits) {
+    setText(elShopCredits, 'shopcr', Math.round(player.credits));
+    const ready = player.credits >= 25;
+    if (elShopBtn._ready !== ready) { elShopBtn._ready = ready; elShopBtn.classList.toggle('ready', ready); }
+  }
 
   /* 波次预告：让压力可预期（"随机的困难让玩家焦虑，可预期的困难让玩家投入"） */
   const left = Math.max(1, Math.ceil(WAVE_LEN - G.waveTimer));

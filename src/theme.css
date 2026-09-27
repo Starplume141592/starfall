@@ -535,23 +535,8 @@ canvas {
 
 /* ===== 意见收集（#19）：角落常驻小按钮 + 面板里的输入控件 =====
    角落里刻意做得很轻（低对比、半透明），它不该在战斗中抢注意力；
-   玩家真正需要它的时候（暂停/结算/开局）面板里都有更醒目的入口。 */
-#fbCorner {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 230;
-  padding: 5px 12px;
-  font-family: inherit;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  color: rgba(150, 190, 225, 0.75);
-  background: rgba(10, 20, 34, 0.55);
-  border: 1px solid rgba(120, 165, 210, 0.3);
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-#fbCorner:hover { color: #dce9ff; border-color: #58a6ff; background: rgba(88, 166, 255, 0.18); }
+   玩家真正需要它的时候（暂停/结算/开局）面板里都有更醒目的入口。
+   位置与外观统一由上面的 #cornerbar 规则管理。 */
 #pause .btn { margin-top: 14px; }
 /* 暂停面板里的画质选择 */
 #pause .qrow { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; }
@@ -632,13 +617,6 @@ body.mobile #hud {
   padding-left: calc(8px + env(safe-area-inset-left, 0px));
   padding-right: calc(8px + env(safe-area-inset-right, 0px));
 }
-body.mobile #fbCorner,
-body.mobile #fsBtn {
-  bottom: calc(40px + env(safe-area-inset-bottom, 0px));
-  right: calc(8px + env(safe-area-inset-right, 0px));
-}
-body.mobile #fsBtn { right: calc(66px + env(safe-area-inset-right, 0px)); }
-body.mobile #fbCorner, body.mobile #fsBtn { padding: 8px 13px; font-size: 12px; }
 
 /* HUD 适度放大（仅这一层用 --ui，上限收紧到 1.35，避免挤掉战场可视面积） */
 body.mobile #stats { font-size: calc(12px * var(--ui, 1)); gap: calc(12px * var(--ui, 1)); }
@@ -680,23 +658,37 @@ body.mobile #panel .chip { font-size: 11.5px; padding: 9px 13px; }
 body.mobile #panel textarea { font-size: 12.5px; padding: 9px; }
 #fsBtn.hidden { display: none; }
 
-/* 全屏按钮：只在触摸设备显示（桌面浏览器按 F11 就行） */
-#fsBtn {
+/* 右下角常驻按钮条：统一用 flex 排，避免各按钮各自绝对定位后互相压住。
+   z-index 330 > 暂停层 320：暂停后按钮仍然可点（否则手机上暂停了就点不回来，
+   只剩"点一下画面"这一条路，玩家不容易发现）。各按钮的打开守卫在 JS 里。 */
+#cornerbar {
   position: absolute;
-  right: 74px;
-  bottom: 12px;
-  z-index: 230;
+  right: 10px;
+  bottom: 10px;
+  z-index: 330;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#cornerbar > button {
   padding: 5px 12px;
   font-family: inherit;
   font-size: 11px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
   color: rgba(150, 190, 225, 0.75);
   background: rgba(10, 20, 34, 0.55);
   border: 1px solid rgba(120, 165, 210, 0.3);
   cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
-#fsBtn:hover { color: #dce9ff; border-color: #58a6ff; background: rgba(88, 166, 255, 0.18); }
-body:not(.mobile) #fsBtn { display: none; }
+#cornerbar > button:hover { color: #dce9ff; border-color: #58a6ff; background: rgba(88, 166, 255, 0.18); }
+/* 触摸专用按钮：桌面用键盘（B / ESC / F11），屏幕上不用占位置 */
+.touchonly { display: none !important; }
+body.mobile .touchonly { display: inline-block !important; }
+#shopBtn b { color: #FFD166; font-weight: 700; font-variant-numeric: tabular-nums; }
+#shopBtn.ready { color: #ffe9b0; border-color: rgba(255, 209, 102, 0.55); }
+body.mobile #cornerbar { right: calc(8px + env(safe-area-inset-right, 0px)); bottom: calc(38px + env(safe-area-inset-bottom, 0px)); }
+body.mobile #cornerbar > button { padding: 8px 12px; font-size: 12px; }
 
 /* 竖屏遮挡提示 */
 #rotate {

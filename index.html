@@ -59,12 +59,17 @@
     </div>
   </div>
 
-  <button id="fbCorner" title="意见收集：报 Bug / 提建议（自动附带诊断信息）">意见</button>
-  <button id="fsBtn" class="hidden" title="全屏">⛶</button>
+  <!-- 右下角常驻按钮条：桌面显示"意见"，触摸设备额外显示 补给 / 暂停 / 全屏
+       （手机没有键盘，B 和 ESC 都按不到 —— 少了这两个按钮，商店和暂停在手机上是打不开的） -->
+  <div id="cornerbar">
+    <button id="shopBtn" class="touchonly" title="补给终端（B）">补给 <b id="shopCredits">0</b></button>
+    <button id="pauseBtn" class="touchonly" title="暂停（ESC）">❚❚</button>
+    <button id="fsBtn" class="touchonly" title="全屏">⛶</button>
+    <button id="fbCorner" title="意见收集：报 Bug / 提建议（自动附带诊断信息）">意见</button>
+  </div>
 
   <div id="hint">WASD / 方向键机动 · 自动开火 · B 补给终端 · 滚轮或 −/= 调镜头高度 · ESC 暂停 · M 静音</div>
-  <div id="touchHint">按住屏幕任意位置拖动即可移动 · 推得越远走得越快 · 升级卡直接点选</div>
-
+  <div id="touchHint">按住屏幕任意位置拖动移动 · 推得越远走得快 · 右下角有 补给 / 暂停</div>
   <!-- 手机竖屏：16:9 舞台只剩一条窄横带，没法玩 —— 提示转屏（同时暂停游戏） -->
   <div id="rotate">
     <div class="rotbox">
