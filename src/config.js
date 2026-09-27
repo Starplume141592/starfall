@@ -353,6 +353,42 @@ export const ZONE = { telegraph: 1.2, r: 96, life: 0.35, dmgMul: 1.6, max: 8 };
 /** 炮塔机弹丸 */
 export const SHOOTER_BULLET = w => ({ spd: 200, r: 4, dmg: (5 + w * 0.5) * ENEMY_DMG_SCALE(w), life: 5, color: PALETTE.enemyBullet });
 
+/**
+ * 局外永久强化（#17 元进度）：用局外信用点购买，效果**刻意保守** ——
+ * 合计满级约 +25 生命 / +7.5% 伤害 / -4% 冷却 / +24 拾取 / +45 开局信用点。
+ * 设计原则：元进度只能"略微降低开局难度"，不能替代单局内的构筑决策，
+ * 也不能让练满之后的局变成无脑局。`cost(lv)` 是"从 lv 升到 lv+1"的价格，越买越贵。
+ */
+export const META_UPGRADES = [
+  { id: 'mhp', name: '强化骨架', icon: '🛡️', maxLv: 5, cost: lv => 60 + lv * 60, desc: lv => `最大生命 +${5 * (lv + 1)}`, apply: (b, lv) => { b.hp += 5 * lv; } },
+  { id: 'mdmg', name: '火控校准', icon: '🔥', maxLv: 5, cost: lv => 80 + lv * 80, desc: lv => `伤害 +${(1.5 * (lv + 1)).toFixed(1)}%`, apply: (b, lv) => { b.dmgMul += 0.015 * lv; } },
+  { id: 'mcd', name: '散热回路', icon: '⏱️', maxLv: 4, cost: lv => 90 + lv * 90, desc: lv => `武器冷却 -${(lv + 1)}%`, apply: (b, lv) => { b.cdMul *= Math.pow(0.99, lv); } },
+  { id: 'mpick', name: '磁力线圈', icon: '🧲', maxLv: 3, cost: lv => 70 + lv * 70, desc: lv => `拾取范围 +${8 * (lv + 1)}`, apply: (b, lv) => { b.pick += 8 * lv; } },
+  { id: 'mcred', name: '回收协议', icon: '💠', maxLv: 3, cost: lv => 100 + lv * 100, desc: lv => `开局信用点 +${15 * (lv + 1)}`, apply: (b, lv) => { b.credits += 15 * lv; } }
+];
+
+/**
+ * 局内商店（#16）：信用点来自击毁精英/首领（不来自时间，避免"挂机也能买"）。
+ * 价格随"本局买过几次"上涨，所以它是一局内的资源分配题，而不是无脑刷。
+ * `once: true` 的项一局只能买一次（否则护盾叠满就没难度了）。
+ */
+export const SHOP_ITEMS = [
+  { id: 'repair', name: '应急维修', icon: '🧰', base: 25, desc: '立刻回复 40% 最大生命' },
+  { id: 'plate', name: '附加装甲', icon: '🛡️', base: 35, desc: '最大生命 +40，并回复等量' },
+  { id: 'calib', name: '火力校准', icon: '🔥', base: 45, desc: '本局伤害 +8%' },
+  { id: 'coolant', name: '循环冷却', icon: '⏱️', base: 45, desc: '本局武器冷却 -6%' },
+  { id: 'inject', name: '数据注入', icon: '💠', base: 50, desc: '立刻获得 1 级经验（会触发升级面板）' },
+  { id: 'shield', name: '相位发生器', icon: '🔵', base: 70, once: true, desc: '获得相位护盾：每 10 秒完全抵挡一次伤害' }
+];
+
+/** 信用点掉落：**只来自"事件"**（精英波 / 首领），随机精英化的小怪不付钱 ——
+ *  随机精英化最高占 26% 的生成量，按它发钱等于"按怪群规模发钱"（实测一整局 2428 点、
+ *  够买 15 次，商店直接变清仓）。改成事件驱动后一整局约 400 点 ≈ 6-7 次购买，
+ *  才是"资源分配题"：你确切知道钱从哪来、什么时候来。 */
+export const CREDIT = { elite: 3, boss: 26 };
+/** 商店涨价：每买过一次（任意项）价格上浮 —— 一局内买得越多越贵 */
+export const SHOP_INFLATE = 0.35;
+
 /** Buff 波及半径等世界尺度常量（原样保留 Demo 数值） */
 export const PICKUP_MAGNET_RANGE = 150;
 

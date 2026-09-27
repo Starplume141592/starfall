@@ -7,7 +7,7 @@ import {
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
-  PICKUP, PICKUP_MAGNET_RANGE,
+  PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, SHOP_ITEMS, CREDIT, SHOP_INFLATE,
   expNeed, mkName
 } from './config.js';
 
@@ -27,6 +27,41 @@ function loadBest() {
 }
 function saveBest(r) {
   try { localStorage.setItem(BEST_KEY, JSON.stringify(r)); } catch { /* 隐私模式忽略 */ }
+}
+
+/* ==================== 局外存档（元进度） ====================
+   设计原则：**元进度只能"略微降低开局难度"，不能替代单局决策**。
+   所以永久强化的总量被压得很小（合计约 +20 生命、+6% 伤害、+4% 冷却），
+   而且越买越贵 —— 它的作用是"给反复游玩的玩家一点确定性的回报和短期目标"，
+   不是"练满之后本作就变成无脑游戏"。 */
+const META_KEY = 'starfall.meta.v1';
+const META_DEFAULT = { v: 1, credits: 0, runs: 0, kills: 0, bestTime: 0, bestWave: 0, playTime: 0, up: {} };
+
+function loadMeta() {
+  try {
+    const m = JSON.parse(localStorage.getItem(META_KEY) || 'null');
+    if (!m || typeof m !== 'object') return { ...META_DEFAULT, up: {} };
+    return { ...META_DEFAULT, ...m, up: m.up || {} };
+  } catch { return { ...META_DEFAULT, up: {} }; }
+}
+function saveMeta() {
+  try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch { /* 隐私模式忽略 */ }
+}
+let meta = loadMeta();
+
+/** 一局结束时的信用点结算：生存时间是主体，波次与击毁是次级来源 */
+function metaReward(run) {
+  return Math.round(run.t / 12 + run.wave * 2 + run.kills / 120);
+}
+
+/** 永久强化的实际加成（reset 时应用）：等级 -> 数值 */
+function metaBonus() {
+  const b = { hp: 0, dmgMul: 0, cdMul: 1, pick: 0, credits: 0 };
+  for (const u of META_UPGRADES) {
+    const lv = meta.up[u.id] || 0;
+    if (lv > 0) u.apply(b, lv);
+  }
+  return b;
 }
 
 /* ==================== 画布：固定逻辑分辨率 + 等比缩放居中 ==================== */
@@ -105,6 +140,7 @@ const elLv = document.getElementById('sLv');
 const elWave = document.getElementById('sWave');
 const elTime = document.getElementById('clockTime');     // 顶部正中：运行计时
 const elKill = document.getElementById('sKill');
+const elCredit = document.getElementById('sCredit');
 const elNext = document.getElementById('clockNext');      // 顶部正中：下一波倒计时
 const elZoom = document.getElementById('sZoom');
 const loadoutEl = document.getElementById('loadout');
@@ -143,18 +179,22 @@ function toggleMute() {
 function reset() {
   /* 战机（#18）：机体差异只在单局内生效，基准是 PLAYER，机体给的是乘/加修正 */
   const ship = SHIPS.find(s => s.id === shipId) || SHIPS[0];
+  /* 局外永久强化（#17）：叠在机体修正之上，量很小 */
+  const mb = metaBonus();
   player = {
     x: WORLD.w / 2, y: WORLD.h / 2, r: PLAYER.r,
     vx: 0, vy: 0,               // 当前速度（惯性）
     angle: 0,                   // 朝向
     footTimer: 0,               // 尾焰粒子计时
     speed: PLAYER_SPEED * (ship.speedMul || 1),
-    hp: ship.hp || PLAYER.hp, maxHp: ship.hp || PLAYER.hp,
+    hp: (ship.hp || PLAYER.hp) + mb.hp, maxHp: (ship.hp || PLAYER.hp) + mb.hp,
     dr: ship.dr || 0, crit: PLAYER.crit + (ship.crit || 0),
     level: 1, exp: 0, expNext: expNeed(1),
-    pickupRange: ship.pick || PLAYER.pickupRange,
-    dmgMul: ship.dmgMul || PLAYER.dmgMul, cdMul: ship.cdMul || PLAYER.cdMul,
+    pickupRange: (ship.pick || PLAYER.pickupRange) + mb.pick,
+    dmgMul: (ship.dmgMul || PLAYER.dmgMul) + mb.dmgMul,
+    cdMul: (ship.cdMul || PLAYER.cdMul) * mb.cdMul,
     invuln: 0, kills: 0,
+    credits: mb.credits, shopBought: {},      // 局内商店：信用点 + 本局购买记录（涨价用）
     regen: 0, shield: false, shieldCd: 0, slowField: 1, orbPullMul: 1,   // 超频跃迁模组带来的能力
     killHealAcc: 0, killHealAt: 0,                        // 击杀回血的每秒上限
     statLevels: {}, mods: {}, jumpPending: false,
@@ -211,7 +251,18 @@ window.addEventListener('keydown', e => {
   if (e.repeat) return;
   audio.unlock();                       // 浏览器要求首次用户操作后才能出声
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-  if (e.code === 'Escape') { if (!currentOptions) togglePause(); return; }   // 终端开着时不抢 ESC
+  if (e.code === 'Escape') {
+    if (shopOpen) { closeShop(); return; }
+    if (!currentOptions) togglePause();
+    return;
+  }
+  if (e.code === 'KeyB') {                       // 局内商店（#16）
+    /* 升级面板待选择时不开商店：否则会把那一级的选择面板盖掉（pendingLevels 还在，
+       但玩家会以为"我的升级没了"）。 */
+    if (G.over || panel._shipPick || currentOptions) return;
+    if (shopOpen) closeShop(); else { shopOpen = true; showShop(); }
+    return;
+  }
   if (e.code === 'Minus' || e.code === 'NumpadSubtract') { nudgeZoom(-1); return; }   // 镜头拉高（看得更远）
   if (e.code === 'Equal' || e.code === 'NumpadAdd') { nudgeZoom(1); return; }         // 镜头推近
   if (e.code === 'KeyM') { toggleMute(); return; }
@@ -363,6 +414,7 @@ function spawnEnemy(forceElite) {
   }
   const e = buildEnemy(type, x, y, w);
   if (forceElite || Math.random() < ELITE.chance(w)) makeElite(e, w);
+  if (forceElite) e.paysCredit = true;      // 精英"波"（事件）付信用点；随机精英化的小怪不付
   G.enemies.push(e);
   /* 编队冲锋（#12）：一定概率以"小队"形式出现（同一侧、间隔很近），
      单只怪是骚扰、一小队才是压力 —— 也让 AoE 武器有发挥场景。
@@ -491,6 +543,13 @@ function hurtEnemy(e, dmg, kx, ky) {
     e.dead = true;
     player.kills++;
     audio.kill();
+
+    /* 局内信用点（#16 商店的唯一来源）：**只来自事件** —— 精英波与首领。
+       随机精英化的小怪（最高占 26% 生成量）不付钱：按它付等于按怪群规模发钱，
+       实测一整局会到 2428 点（够买 15 次），商店就变成清仓而不是取舍。
+       精英波的怪带上 paysCredit 标记，钱因此是"可预期的事件奖励"。 */
+    if (e.boss) { player.credits += CREDIT.boss; addText(e.x, e.y - 34, `+${CREDIT.boss} 信用点`, '#FFD166', 18); }
+    else if (e.paysCredit) { player.credits += CREDIT.elite; addText(e.x, e.y - 30, `+${CREDIT.elite} 信用点`, '#FFD166', 14); }
 
     /* 击杀回复（纳米虫群 + 噬能涂层）—— 每秒最多回 5% 最大生命，
        否则后期每秒几十杀会变成无敌。所有吸血途径都必须汇进这一条限速里。 */
@@ -784,19 +843,32 @@ function gameOver() {
   if (isNew) saveBest(cur);
   const show = isNew ? cur : best;
 
+  /* 局外存档结算（#17）：信用点 + 累计战绩 */
+  const reward = metaReward(cur);
+  meta.credits += reward;
+  meta.runs++;
+  meta.kills += cur.kills;
+  meta.playTime += cur.t;
+  meta.bestTime = Math.max(meta.bestTime, cur.t);
+  meta.bestWave = Math.max(meta.bestWave, cur.wave);
+  saveMeta();
+
   const build = player.weapons
     .map(w => `${WEAPONS[w.id].name} Lv${w.lv}`)
     .join(' · ');
   const mods = MODULES.filter(m => player.mods[m.id]).map(m => m.name).join(' · ');
 
   panel.innerHTML = `<div id="big">信号中断</div>
-    <p class="sub">存活 ${fmtTime(G.t)} · 第 ${G.wave} 波 · 击毁 ${player.kills} · 型号 ${mkName(player.level)} · 最高连击 ${G.comboBest}</p>
+    <p class="sub">${player.shipName} · 存活 ${fmtTime(G.t)} · 第 ${G.wave} 波 · 击毁 ${player.kills} · 型号 ${mkName(player.level)} · 最高连击 ${G.comboBest}</p>
     <p class="sub best">${isNew ? '★ 新纪录' : '历史最佳'} · 存活 ${fmtTime(show.t)} · 击毁 ${show.kills} · 第 ${show.wave} 波</p>
+    <p class="sub credit">本局结算 +${reward} 局外信用点（共 ${meta.credits}）· 局内剩余信用点 ${Math.round(player.credits)}</p>
     <p class="sub build">本局构筑：${build || '无'}</p>
     ${mods ? `<p class="sub build">超频模组：${mods}</p>` : ''}
-    <button class="btn" id="again">重新接入</button>`;
+    <button class="btn" id="again">重新接入</button>
+    <button class="btn alt" id="toMeta">研发终端</button>`;
   overlay.classList.add('show');
   document.getElementById('again').onclick = showShipSelect;
+  document.getElementById('toMeta').onclick = () => showMeta();
 }
 
 /* ==================== 战机选择（#18） ==================== */
@@ -821,8 +893,11 @@ function showShipSelect(silent) {
     </div>`).join('');
   panel.innerHTML = `<h2>选择机体 // 接入前</h2>
     <p class="sub">机体差异只在单局内生效 · 点击或按 1 / 2 / 3</p>
-    <div id="cards" class="ships">${cards}</div>`;
+    <div id="cards" class="ships">${cards}</div>
+    <button class="btn" id="metaOpen">研发终端 · 局外信用点 ${meta.credits}</button>`;
   overlay.classList.add('show');
+  const mo = document.getElementById('metaOpen');
+  if (mo) mo.onclick = () => showMeta();
   const pick = (id) => {
     shipId = id;
     try { localStorage.setItem(SHIP_KEY, id); } catch (e) { /* 隐私模式下忽略 */ }
@@ -832,6 +907,121 @@ function showShipSelect(silent) {
   };
   panel.querySelectorAll('.card').forEach(el => { el.onclick = () => pick(el.dataset.ship); });
   panel._shipPick = pick;
+  panel._metaBtn = true;
+}
+
+/* ==================== 局内商店（#16） ==================== */
+/** 价格随"本局买过几次"上涨（SHOP_INFLATE），所以它是一局内的资源分配题 */
+function shopPrice(item) {
+  const bought = (player.shopBought[item.id] || 0) + (player.shopCount || 0);
+  return Math.round(item.base * (1 + bought * SHOP_INFLATE));
+}
+
+function buyItem(item) {
+  const price = shopPrice(item);
+  if (player.credits < price) { audio.hurt(); return false; }
+  if (item.once && player.shopBought[item.id]) return false;
+  player.credits -= price;
+  player.shopBought[item.id] = (player.shopBought[item.id] || 0) + 1;
+  player.shopCount = (player.shopCount || 0) + 1;
+  switch (item.id) {
+    case 'repair': player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.4); break;
+    case 'plate': player.maxHp += 40; player.hp += 40; break;
+    case 'calib': player.dmgMul += 0.08; break;
+    case 'coolant': player.cdMul *= 0.94; break;
+    case 'inject': {
+      /* 不能在这里直接开升级面板（那会叠在商店之上、且商店仍是"打开"状态）。
+         正确做法：先关店恢复游戏，再给经验让它自然触发升级面板。 */
+      shopOpen = false;
+      overlay.classList.remove('show');
+      G.paused = !!pausedManual;
+      gainExp(Math.round(player.expNext));
+      return true;
+    }
+    case 'shield': player.shield = true; player.shieldCd = 0; break;
+  }
+  audio.pickup();
+  addText(player.x, player.y - 40, item.name, PALETTE.allyBeam, 16);
+  return true;
+}
+
+/** 商店面板是否开着（B 键开关，暂停游戏） */
+let shopOpen = false;
+
+/** 商店面板：B 键开关（暂停游戏）。任何时候都能开 —— 但钱只来自精英/首领。 */
+function showShop() {
+  G.paused = true;
+  currentOptions = null;
+  panel._shipPick = null;
+  const rows = SHOP_ITEMS.map(it => {
+    const price = shopPrice(it);
+    const owned = it.once && player.shopBought[it.id];
+    const afford = player.credits >= price && !owned;
+    return `<div class="card shop${afford ? '' : ' off'}" data-item="${it.id}">
+      <div class="ic">${iconFor(it.id, '#FFD166', it.icon)}</div>
+      <div class="nm">${it.name}</div>
+      <div class="lv">${owned ? '已装备' : price + ' 信用点'}</div>
+      <div class="ds">${it.desc}</div>
+    </div>`;
+  }).join('');
+  panel.innerHTML = `<h2>补给终端 // 信用点 ${Math.round(player.credits)}</h2>
+    <p class="sub">信用点来自击毁精英与首领 · 每买一次全场涨价 ${Math.round(SHOP_INFLATE * 100)}% · 按 B 或 ESC 关闭</p>
+    <div id="cards">${rows}</div>`;
+  overlay.classList.add('show');
+  panel.querySelectorAll('.card').forEach(el => {
+    el.onclick = () => {
+      const it = SHOP_ITEMS.find(x => x.id === el.dataset.item);
+      if (it) buyItem(it);
+      /* 只有商店还开着才重绘。'数据注入' 会主动关店去弹升级面板 ——
+         无条件重绘会把它刚弹出的面板覆盖掉（实测：升级了但面板是商店，玩家以为升级丢了）。 */
+      if (shopOpen) showShop();
+    };
+  });
+}
+
+function closeShop() {
+  overlay.classList.remove('show');
+  shopOpen = false;
+  G.paused = !!pausedManual;
+  currentOptions = null;
+  if (pausedManual) pauseEl.classList.remove('hidden');
+}
+
+/* ==================== 局外研发终端（#17） ==================== */
+function showMeta() {
+  G.paused = true;
+  panel._shipPick = null;
+  const up = META_UPGRADES.map(u => {
+    const lv = meta.up[u.id] || 0;
+    const maxed = lv >= u.maxLv;
+    const price = u.cost(lv);
+    const afford = !maxed && meta.credits >= price;
+    return `<div class="card meta${maxed ? ' on' : (afford ? '' : ' off')}" data-up="${u.id}">
+      <div class="ic">${iconFor(u.id, '#7FD8FF', u.icon)}</div>
+      <div class="nm">${u.name}</div>
+      <div class="lv">${maxed ? '已满级' : `Lv ${lv}/${u.maxLv} · ${price} 信用点`}</div>
+      <div class="ds">${u.desc(lv)}</div>
+    </div>`;
+  }).join('');
+  panel.innerHTML = `<h2>研发终端 // 局外信用点 ${meta.credits}</h2>
+    <p class="sub">累计 ${meta.runs} 局 · 击毁 ${meta.kills} · 最长存活 ${fmtTime(meta.bestTime)} · 最远第 ${meta.bestWave} 波 · 总时长 ${fmtTime(meta.playTime)}</p>
+    <div id="cards">${up}</div>
+    <button class="btn" id="metaBack">返回机体选择</button>`;
+  overlay.classList.add('show');
+  panel.querySelectorAll('.card').forEach(el => {
+    el.onclick = () => {
+      const u = META_UPGRADES.find(x => x.id === el.dataset.up);
+      const lv = u ? (meta.up[u.id] || 0) : 0;
+      if (u && lv < u.maxLv && meta.credits >= u.cost(lv)) {
+        meta.credits -= u.cost(lv);
+        meta.up[u.id] = lv + 1;
+        saveMeta();
+        audio.levelUp();
+      }
+      showMeta();
+    };
+  });
+  document.getElementById('metaBack').onclick = () => showShipSelect(true);
 }
 
 /* ==================== 武器 ==================== */
@@ -1882,6 +2072,7 @@ function updateHUD() {
   setText(elWave, 'wave', G.wave);
   setText(elTime, 'time', fmtTime(G.t));
   setText(elKill, 'kill', player.kills);
+  setText(elCredit, 'credit', Math.round(player.credits));
 
   /* 波次预告：让压力可预期（"随机的困难让玩家焦虑，可预期的困难让玩家投入"） */
   const left = Math.max(1, Math.ceil(WAVE_LEN - G.waveTimer));
@@ -2069,7 +2260,13 @@ window.__game = {
   nudgeZoom,
   bot(on) { botOn = !!on; return botOn; },
   get botOn() { return botOn; },
-  /** 战机（#18）：查看/切换机体（切换会立即重开一局） */
+  /** 局外存档（#17）：查看/调整元进度（改完调 saveMeta 才会落盘） */
+  get meta() { return meta; },
+  saveMeta,
+  metaReward,
+  /** 局内商店（#16）：B 键等价入口（与按键同样遵守"升级面板待选时不覆盖"） */
+  openShop() { if (G.over || currentOptions) return false; shopOpen = true; showShop(); return true; },
+  closeShop,
   get ship() { return shipId; },
   setShip(id) { if (!SHIPS.some(s => s.id === id)) return shipId; shipId = id; try { localStorage.setItem(SHIP_KEY, id); } catch (e) { } restart(); return shipId; },
   showShipSelect,

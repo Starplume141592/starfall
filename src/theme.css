@@ -468,6 +468,15 @@ canvas {
 }
 .btn:hover { background: rgba(88, 166, 255, 0.2); color: #dce9ff; border-color: #58a6ff; }
 .btn:active { background: rgba(34, 211, 238, 0.22); border-color: #22d3ee; }
+.btn.alt { color: #FFD166; border-color: rgba(255, 209, 102, 0.5); background: rgba(255, 209, 102, 0.08); }
+.btn.alt:hover { background: rgba(255, 209, 102, 0.18); color: #ffe9b0; border-color: #FFD166; }
+/* 商店 / 研发终端的卡片：买得起是亮色、买不起压暗（不减字重，保持可读） */
+.card.shop .lv, .card.meta .lv { color: #FFD166; background: rgba(255, 209, 102, 0.1); border-color: rgba(255, 209, 102, 0.35); }
+.card.shop.off, .card.meta.off { opacity: 0.42; cursor: not-allowed; }
+.card.shop.off:hover, .card.meta.off:hover { transform: none; border-color: rgba(120, 160, 200, 0.3); }
+.card.meta.on { border-color: #58a6ff; }
+.card.meta.on::before { background: #58a6ff; }
+#panel p.sub.credit { color: #FFD166; }
 
 /* 结算面板整体居中一点 */
 #panel:has(#big) { text-align: center; min-width: 560px; }
