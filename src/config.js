@@ -43,7 +43,8 @@ export const WEAPONS = {
     num: lv => 1 + N(lv),
     bulletSpeed: 900, range: 620, bulletR: 3, spread: 0.12,
     pierce: lv => (lv >= 6 ? 2 : 0),
-    desc: lv => `同时射出 ${1 + N(lv)} 枚追踪导弹，伤害 ${Math.round(22 + L(lv) * 12)}`
+    home: 5.5,                        // 追踪转向速率（rad/s）：真·追踪，但转不紧急转弯
+    desc: lv => `同时射出 ${1 + N(lv)} 枚**追踪**导弹，伤害 ${Math.round(22 + L(lv) * 12)}`
   },
   orbit: {
     mode: 'orbit', name: '卫戍无人机', icon: '🛰️', color: '#7FD8FF', maxLv: 7,
@@ -99,9 +100,10 @@ export const WEAPONS = {
     num: lv => 2 + N(lv),
     bulletSpeed: 820, range: 640, bulletR: 5, spread: 0.05,
     pierce: () => 1,
+    blast: 62,                        // 命中后的小范围爆炸半径（对周围敌人 45% 伤害）
     selfDps: lv => 1.2 + L(lv) * 0.3,
     tag: '代价',
-    desc: lv => `高能弹伤害 ${Math.round(70 + L(lv) * 40)} 并穿透，但每秒自损 ${(1.2 + L(lv) * 0.3).toFixed(1)} 生命（最多压到 25% 生命）`
+    desc: lv => `高能弹伤害 ${Math.round(70 + L(lv) * 40)}、穿透并在命中点引爆（范围 45% 伤害），但每秒自损 ${(1.2 + L(lv) * 0.3).toFixed(1)} 生命（最多压到 25% 生命）`
   },
   nanoswarm: {
     mode: 'shot', name: '纳米虫群', icon: '🦠', color: '#22d3ee', maxLv: 7,
@@ -111,7 +113,7 @@ export const WEAPONS = {
     bulletSpeed: 950, range: 560, bulletR: 2, spread: 0.3,
     onKillHeal: lv => 1 + L(lv) * 0.6,
     tag: '代价',
-    desc: lv => `${3 + N(lv) * 2} 只纳米虫，单只伤害仅 ${Math.round(9 + L(lv) * 4)}，但每次击杀回复 ${(1 + L(lv) * 0.6).toFixed(1)} 生命（每秒最多回 5% 最大生命）`
+    desc: lv => `${3 + N(lv) * 2} 只纳米虫，单只伤害仅 ${Math.round(9 + L(lv) * 4)}，命中附带减速（控场），每次击杀回复 ${(1 + L(lv) * 0.6).toFixed(1)} 生命（每秒最多回 5% 最大生命）`
   },
   flak: {
     mode: 'flak', name: '近防霰弹', icon: '🛡️', color: '#A8C8FF', maxLv: 7,

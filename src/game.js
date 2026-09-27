@@ -809,6 +809,7 @@ function updateWeapons(dt) {
               type: 'dart', x: player.x, y: player.y,
               vx: Math.cos(a) * def.bulletSpeed, vy: Math.sin(a) * def.bulletSpeed,
               r: def.bulletR, dmg, pierce: def.pierce ? def.pierce(w.lv) : 0, hit: new Set(),
+              home: def.home || 0, blast: def.blast || 0,
               life: bulletLife(def), color: def.color, weapon: w.id
             });
           }
@@ -1223,6 +1224,28 @@ function update(dt) {
     if (b.life <= 0 || b.x < cullL || b.x > cullR || b.y < cullT || b.y > cullB) {
       G.bullets.splice(i, 1); continue;
     }
+    /* 武器行为分支 #15-①：蜂群导弹 —— 真·追踪（以前卡面写着"追踪导弹"，
+       实际和过载反应堆走的是同一条直线弹逻辑，是名不副实）。限制转向速率，不会变成必中。 */
+    if (b.weapon === 'dart' && b.home) {
+      let best = null, bestD = 1e9;
+      forEachNear(b.x, b.y, 300, (e) => {
+        if (e.dead) return;
+        const dx = e.x - b.x, dy = e.y - b.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD) { bestD = d2; best = e; }
+      });
+      if (best) {
+        const want = Math.atan2(best.y - b.y, best.x - b.x);
+        const cur = Math.atan2(b.vy, b.vx);
+        let diff = want - cur;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        const turn = clamp(diff, -b.home * dt, b.home * dt);
+        const a = cur + turn;
+        const spd = Math.hypot(b.vx, b.vy);
+        b.vx = Math.cos(a) * spd; b.vy = Math.sin(a) * spd;
+      }
+    }
     let removed = false;
     forEachNear(b.x, b.y, b.r + 24, (e) => {
       if (removed || e.dead || b.hit.has(e.id)) return;
@@ -1230,6 +1253,19 @@ function update(dt) {
       if (dx * dx + dy * dy < (e.r + b.r) ** 2) {
         b.hit.add(e.id);
         hurtEnemy(e, b.dmg, b.vx * (b.knock || 0.05), b.vy * (b.knock || 0.05));
+        /* 武器行为分支 #15-②：过载反应堆 —— 命中即小范围爆炸（它是"带代价"的装备，
+           代价是自损，收益就该是范围伤害，而不是单纯的"数字大一点的直线弹"） */
+        if (b.weapon === 'overload' && b.blast) {
+          forEachNear(e.x, e.y, b.blast, (o) => {
+            if (o.dead || o === e) return;
+            const ox = o.x - e.x, oy = o.y - e.y;
+            if (ox * ox + oy * oy < b.blast * b.blast) hurtEnemy(o, b.dmg * 0.45, ox * 0.04, oy * 0.04);
+          });
+          burst(e.x, e.y, b.color, 10, 260);
+        }
+        /* 武器行为分支 #15-③：纳米虫群 —— 命中附带短暂减速（"虫群啃食"），
+           让低伤害高射速的它在控场上也有用处，而不是只有击杀回血 */
+        if (b.weapon === 'nanoswarm') { e.slowT = Math.max(e.slowT || 0, 1.1); e.slowMul = 0.55; }
         burst(b.x, b.y, b.color, 5, 200);
         if (b.pierce-- <= 0) { G.bullets.splice(i, 1); removed = true; }
       }
@@ -1261,6 +1297,8 @@ function update(dt) {
       }
       if (e.raged) spd *= 1.55;
     }
+    /* 武器行为分支 #15-③：纳米虫群的减速（唯一能给敌人上负面状态的武器） */
+    if (e.slowT > 0) { e.slowT -= dt; spd *= (e.slowMul || 0.55); }
 
     /* 精英的威胁升级：周期性环形弹幕（普通怪只会撞人，精英会逼你走位） */
     if (e.elite && !e.boss) {
