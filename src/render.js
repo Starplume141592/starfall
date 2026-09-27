@@ -580,8 +580,21 @@ export function render(ctx, S) {
     ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.75, 0, Math.PI * 2); ctx.fill();
   }
 
-  /* 敌方弹丸：暖琥珀 + 拖尾。拖尾不是装饰 —— 弹幕游戏里玩家读的是"轨迹"，
-     没有拖尾时 4px 的圆点在满屏特效里会突然出现在脸上。 */
+  /* 粒子 */
+  for (const p of G.parts) {
+    if (!cull(p.x, p.y, 40)) continue;
+    const a = clamp(p.life / p.max, 0, 1);
+    ctx.globalAlpha = a * 0.5; ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = a;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  /* 敌方弹丸：**画在粒子之后**。
+     粒子处于 `lighter` 加法混合，压在弹幕上会把弹幕的颜色往白里推；
+     而弹幕是"会杀你"的信息，必须是这一层里最后落地、形状最完整的东西。
+     顺序：粒子 → 敌方弹幕 → （后面）玩家。 */
   for (const b of G.enemyBullets) {
     if (!cull(b.x, b.y, 60)) continue;
     const sp = Math.hypot(b.vx, b.vy) || 1;
@@ -596,17 +609,6 @@ export function render(ctx, S) {
     ctx.fillStyle = PALETTE.enemyBulletCore;
     ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.45, 0, Math.PI * 2); ctx.fill();
   }
-
-  /* 粒子 */
-  for (const p of G.parts) {
-    if (!cull(p.x, p.y, 40)) continue;
-    const a = clamp(p.life / p.max, 0, 1);
-    ctx.globalAlpha = a * 0.5; ctx.fillStyle = p.color;
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 2, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = a;
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
 
   /* 陨级单位蓄力预警线 */

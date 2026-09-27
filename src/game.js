@@ -371,6 +371,10 @@ function addText(x, y, txt, color, size) {
   if (G.texts.length >= MAX_TEXT) return;
   G.texts.push({ x, y, txt: String(txt), color: color || '#ffe066', size: size || 15, life: 0.7, max: 0.7 });
 }
+/** 爆炸/击杀火花。
+ *  高光色**不能用暖黄**：暖琥珀是调色板里"危险"的语义色（敌方弹幕、预警），
+ *  而火花一秒能刷几百颗 —— 满屏暖黄碎屑会让玩家把爆炸当成弹幕。
+ *  所以高光取冷白蓝，火花主体取来源单位的本色（小兵本来就是冷灰）。 */
 function burst(x, y, color, count, power) {
   const room = MAX_PART - G.parts.length;
   if (room <= 0) return;
@@ -381,7 +385,7 @@ function burst(x, y, color, count, power) {
     G.parts.push({
       x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
       life: rand(0.25, 0.65), max: 0.65, r: rand(1.5, 3.5),
-      color: Math.random() < 0.3 ? '#ffe066' : color
+      color: Math.random() < 0.3 ? PALETTE.allyBeam : color
     });
   }
 }
