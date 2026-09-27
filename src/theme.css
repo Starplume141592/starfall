@@ -428,6 +428,14 @@ canvas {
   background: rgba(240, 228, 66, 0.1);
   border-color: rgba(240, 228, 66, 0.35);
 }
+/* 机体选择：卡片更宽（描述是完整句子），当前选中项有标记 */
+#cards.ships { flex-wrap: wrap; }
+.card.ship { width: 300px; min-height: 150px; }
+.card.ship .nm { display: flex; align-items: baseline; gap: 8px; font-size: 18px; }
+.card.ship .nm .lv { margin: 0; }
+.card.ship .ds { font-size: 12.5px; }
+.card.ship.on { border-color: #58a6ff; box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.4) inset, 0 0 22px rgba(88, 166, 255, 0.18); }
+.card.ship.on::before { background: #58a6ff; }
 .card.jump:hover {
   border-color: #F0E442;
   box-shadow: inset 0 0 26px rgba(240, 228, 66, 0.14), 0 8px 22px rgba(0, 0, 0, 0.5);

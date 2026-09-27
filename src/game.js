@@ -1,7 +1,7 @@
 // 劫波 · 游戏逻辑与主循环（原生 ES module，无打包器、无依赖、无资源文件）
 // 所有数值来自 config.js；绘制全部交给 render.js。行为与单文件 Demo 完全一致。
 import {
-  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, BLINK, ZONE, LASER, ELITE, SHOOTER_BULLET,
+  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, BLINK, ZONE, LASER, ELITE, SHOOTER_BULLET, SHIPS,
   ENEMY_SPEED_SCALE,
   WAVE_LEN, MAX_ENEMY, MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE, SPAWN, ENEMY_ABILITY, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
@@ -141,20 +141,25 @@ function toggleMute() {
 }
 
 function reset() {
+  /* 战机（#18）：机体差异只在单局内生效，基准是 PLAYER，机体给的是乘/加修正 */
+  const ship = SHIPS.find(s => s.id === shipId) || SHIPS[0];
   player = {
     x: WORLD.w / 2, y: WORLD.h / 2, r: PLAYER.r,
     vx: 0, vy: 0,               // 当前速度（惯性）
     angle: 0,                   // 朝向
     footTimer: 0,               // 尾焰粒子计时
-    speed: PLAYER_SPEED,
-    hp: PLAYER.hp, maxHp: PLAYER.hp, dr: 0, crit: PLAYER.crit,
+    speed: PLAYER_SPEED * (ship.speedMul || 1),
+    hp: ship.hp || PLAYER.hp, maxHp: ship.hp || PLAYER.hp,
+    dr: ship.dr || 0, crit: PLAYER.crit + (ship.crit || 0),
     level: 1, exp: 0, expNext: expNeed(1),
-    pickupRange: PLAYER.pickupRange, dmgMul: PLAYER.dmgMul, cdMul: PLAYER.cdMul,
+    pickupRange: ship.pick || PLAYER.pickupRange,
+    dmgMul: ship.dmgMul || PLAYER.dmgMul, cdMul: ship.cdMul || PLAYER.cdMul,
     invuln: 0, kills: 0,
     regen: 0, shield: false, shieldCd: 0, slowField: 1, orbPullMul: 1,   // 超频跃迁模组带来的能力
     killHealAcc: 0, killHealAt: 0,                        // 击杀回血的每秒上限
     statLevels: {}, mods: {}, jumpPending: false,
-    weapons: [{ id: 'dart', lv: 1, t: 0.15, angle: 0 }],
+    ship: ship.id, shipName: ship.name,
+    weapons: [{ id: ship.start, lv: 1, t: 0.15, angle: 0 }],
     touch: { active: false, sx: 0, sy: 0, dx: 0, dy: 0, id: null }
   };
   G = {
@@ -210,7 +215,12 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Minus' || e.code === 'NumpadSubtract') { nudgeZoom(-1); return; }   // 镜头拉高（看得更远）
   if (e.code === 'Equal' || e.code === 'NumpadAdd') { nudgeZoom(1); return; }         // 镜头推近
   if (e.code === 'KeyM') { toggleMute(); return; }
-  if (e.code === 'KeyR' && G && G.over) restart();
+  if (e.code === 'KeyR' && G && G.over) { showShipSelect(); return; }
+  // 机体选择面板开着时，1/2/3 直接选机体
+  if (panel._shipPick) {
+    const si = ['Digit1', 'Digit2', 'Digit3', 'Numpad1', 'Numpad2', 'Numpad3'].indexOf(e.code);
+    if (si >= 0 && SHIPS[si]) { panel._shipPick(SHIPS[si].id); return; }
+  }
   // 装备终端开着时，1/2/3 直接选卡
   if (currentOptions) {
     const idx = ['Digit1', 'Digit2', 'Digit3', 'Numpad1', 'Numpad2', 'Numpad3'].indexOf(e.code);
@@ -715,6 +725,7 @@ function buildModuleOptions() {
 
 function showUpgrade() {
   G.paused = true;
+  panel._shipPick = null;      // 升级面板可能紧接着机体面板出现（点击机体后立刻升级），必须清掉旧的抢键回调
   const jump = player.jumpPending;
   player.jumpPending = false;
   const opts = jump ? buildModuleOptions() : buildOptions();
@@ -785,7 +796,42 @@ function gameOver() {
     ${mods ? `<p class="sub build">超频模组：${mods}</p>` : ''}
     <button class="btn" id="again">重新接入</button>`;
   overlay.classList.add('show');
-  document.getElementById('again').onclick = restart;
+  document.getElementById('again').onclick = showShipSelect;
+}
+
+/* ==================== 战机选择（#18） ==================== */
+const SHIP_KEY = 'starfall.ship.v1';
+let shipId = (() => {
+  try {
+    const v = localStorage.getItem(SHIP_KEY);
+    return SHIPS.some(s => s.id === v) ? v : SHIPS[0].id;
+  } catch (e) { return SHIPS[0].id; }
+})();
+
+/** 开局/重开前的机体三选一：纯单局差异，不做解锁、不碰存档（只记住上次选择）
+ *  silent：首次加载时浏览器还没拿到用户手势，此时出声只会刷一串 AudioContext 警告 */
+function showShipSelect(silent) {
+  G.paused = true;
+  currentOptions = null;
+  if (!silent) audio.levelUp();
+  const cards = SHIPS.map(s => `
+    <div class="card ship${s.id === shipId ? ' on' : ''}" data-ship="${s.id}">
+      <div class="nm" style="color:${s.color}">${s.name}<span class="lv">${s.tag}</span></div>
+      <div class="ds">${s.desc}</div>
+    </div>`).join('');
+  panel.innerHTML = `<h2>选择机体 // 接入前</h2>
+    <p class="sub">机体差异只在单局内生效 · 点击或按 1 / 2 / 3</p>
+    <div id="cards" class="ships">${cards}</div>`;
+  overlay.classList.add('show');
+  const pick = (id) => {
+    shipId = id;
+    try { localStorage.setItem(SHIP_KEY, id); } catch (e) { /* 隐私模式下忽略 */ }
+    panel._shipPick = null;          // 必须清掉：否则对局中按 1/2/3 会当成"选机体"直接重开
+    overlay.classList.remove('show');
+    restart();
+  };
+  panel.querySelectorAll('.card').forEach(el => { el.onclick = () => pick(el.dataset.ship); });
+  panel._shipPick = pick;
 }
 
 /* ==================== 武器 ==================== */
@@ -1989,6 +2035,8 @@ function sim(seconds, opts) {
 
 reset();
 requestAnimationFrame(loop);
+/* 首次进入（或刷新后）先选机体：直接把玩家丢进战场会让新玩家不知道自己在开什么 */
+showShipSelect(true);
 
 /* 调试钩子：浏览器控制台里可直接查看/微调状态，不影响游戏运行
    例：__game.player.speed = 420   __game.sim(60)   __game.bot(true) */
@@ -2021,6 +2069,10 @@ window.__game = {
   nudgeZoom,
   bot(on) { botOn = !!on; return botOn; },
   get botOn() { return botOn; },
+  /** 战机（#18）：查看/切换机体（切换会立即重开一局） */
+  get ship() { return shipId; },
+  setShip(id) { if (!SHIPS.some(s => s.id === id)) return shipId; shipId = id; try { localStorage.setItem(SHIP_KEY, id); } catch (e) { } restart(); return shipId; },
+  showShipSelect,
   /** 画面特效开关（bloom / backdrop / vignette），控制台里可实时改 */
   fx,
 };

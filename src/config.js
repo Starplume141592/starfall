@@ -423,6 +423,32 @@ export const CAMERA = { lag: 12, lead: 0.08 };   // 镜头缓动速率 / 按速�
 
 export const PLAYER = { r: 8, hp: 150, pickupRange: 130, dmgMul: 1.3, cdMul: 0.9, crit: 0.05, invuln: 0.7 };
 
+/**
+ * 战机（#18）：开局三选一，只在**单局内**生效，不做解锁、不碰存档 ——
+ * 目的是让"同一套卡池"在不同机体上有不同的取舍（厚血慢速 vs 纸皮高机动），
+ * 从而不增加卡池的情况下提高重复可玩性。数值都是相对 PLAYER 基准的乘/加。
+ * `start` 是该机体的招牌起始武器（另一把固定为链式电弧，保证前期不至于没武器）。
+ */
+export const SHIPS = [
+  {
+    id: 'falcon', name: '游隼', tag: '均衡', color: '#58a6ff',
+    desc: '标准机体：无额外加成，机动与火力都在基准线上。适合第一次接触本作。',
+    start: 'dart'
+  },
+  {
+    id: 'bulwark', name: '壁垒', tag: '厚血', color: '#A8C8FF',
+    desc: '重装机体：最大生命 230（+80）、受伤减免 12%，但移速 ×0.86、射速 ×0.95。招牌武器：近防霰弹。',
+    start: 'flak',
+    hp: 230, dr: 0.12, speedMul: 0.86, cdMul: 0.95, dmgMul: 1.15, pick: 120
+  },
+  {
+    id: 'zephyr', name: '疾风', tag: '纸皮高机动', color: '#4FD6C8',
+    desc: '轻装机体：移速 ×1.2、暴击 +8%、冷却 ×0.85、拾取范围 190，但最大生命只有 110。招牌武器：等离子刃环。',
+    start: 'saw',
+    hp: 110, speedMul: 1.2, cdMul: 0.85, crit: 0.08, pick: 190
+  }
+];
+
 /** 数据残片：绿色菱形，与玩家的蓝、导弹/电弧的蓝白彻底区分 */
 export const ORB = { r: 3, color: PALETTE.orbBody, core: PALETTE.orbCore };
 export const ORB_AUTO_PICKUP = false; // 正式规则：只有进入拾取范围（pickupRange）的残片才会吸附
