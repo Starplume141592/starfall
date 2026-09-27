@@ -215,7 +215,10 @@ export const MODULES = [
  * 后段：w>25 起额外递增 —— 玩家战力在 5–7 分钟见顶，靠这段递增在 10–14 分钟越过它形成终局，
  *       否则满配玩家会无限无伤刷下去（实测过的真实问题）。
  */
-export const ENEMY_SCALE = w => (1 + w * 0.135 + w * w * 0.0014) * (1 + Math.max(0, w - 25) * 0.16);
+export const ENEMY_SCALE = w => (1 + w * 0.135 + w * w * 0.0014) * (1 + Math.max(0, w - 25) * 0.22);
+/* 敌方伤害成长：试过调到 0.045 想补回"生成率下调"造成的压力缺口，实测反而把第 18 波前后
+   变成硬墙（351 秒早死）—— 后期压力应该由机制（狙击机 / 封锁圈 / Boss 阶段 / 精英波规模）提供，
+   而不是让每一次挨打都更疼。保持原值。 */
 export const ENEMY_DMG_SCALE = w => 1 + w * 0.035;
 
 /**
@@ -259,14 +262,14 @@ export const PALETTE = {
  * 敌方单位（速度见上面的 ENEMY_SPEED_SCALE）
  */
 export const ENEMY_TYPES = {
-  normal: { name: '巡逻机', hp: w => (14 + w * 7) * ENEMY_SCALE(w), spdMin: 92, spdMax: 118, r: 8, color: PALETTE.chaffBody, exp: 2 },
-  fast: { name: '拦截机', hp: w => (12 + w * 5) * ENEMY_SCALE(w), spd: 178, r: 6, color: PALETTE.fastBody, exp: 2 },
-  tank: { name: '重装机兵', hp: w => (55 + w * 22) * ENEMY_SCALE(w), spd: 72, r: 12, color: PALETTE.tankBody, exp: 6 },
-  triangle: { name: '突袭机', hp: w => (18 + w * 8) * ENEMY_SCALE(w), spd: 112, r: 8, color: PALETTE.fastBody, exp: 3 },
-  splitter: { name: '分裂机', hp: w => (36 + w * 16) * ENEMY_SCALE(w), spd: 84, r: 10, color: PALETTE.splitterBody, exp: 4 },
-  shooter: { name: '炮塔机', hp: w => (20 + w * 8) * ENEMY_SCALE(w), spd: 84, r: 7, color: PALETTE.shooterBody, exp: 3 },
+  normal: { name: '巡逻机', hp: w => (14 + w * 7) * ENEMY_SCALE(w), spdMin: 92, spdMax: 118, r: 8, color: PALETTE.chaffBody, exp: 3 },
+  fast: { name: '拦截机', hp: w => (12 + w * 5) * ENEMY_SCALE(w), spd: 178, r: 6, color: PALETTE.fastBody, exp: 4.5 },
+  tank: { name: '重装机兵', hp: w => (55 + w * 22) * ENEMY_SCALE(w), spd: 72, r: 12, color: PALETTE.tankBody, exp: 9 },
+  triangle: { name: '突袭机', hp: w => (18 + w * 8) * ENEMY_SCALE(w), spd: 112, r: 8, color: PALETTE.fastBody, exp: 4.5 },
+  splitter: { name: '分裂机', hp: w => (36 + w * 16) * ENEMY_SCALE(w), spd: 84, r: 10, color: PALETTE.splitterBody, exp: 6 },
+  shooter: { name: '炮塔机', hp: w => (20 + w * 8) * ENEMY_SCALE(w), spd: 84, r: 7, color: PALETTE.shooterBody, exp: 4.5 },
   /* 狙击机：不追人，保持距离蓄力预警激光 —— 威胁来自"你必须打断它或离开射线" */
-  sniper: { name: '狙击机', hp: w => (26 + w * 10) * ENEMY_SCALE(w), spd: 62, r: 8, color: PALETTE.shooterBody, exp: 5 }
+  sniper: { name: '狙击机', hp: w => (26 + w * 10) * ENEMY_SCALE(w), spd: 62, r: 8, color: PALETTE.shooterBody, exp: 7.5 }
 };
 
 /**
@@ -291,7 +294,7 @@ export const LASER = {
 export const enemyDamage = w => (3.5 + w * 0.55) * ENEMY_DMG_SCALE(w);
 
 /** 分裂机死亡后裂出的子机 */
-export const SPLITTER_CHILD = w => ({ hp: (8 + w * 3) * ENEMY_SCALE(w), r: 5, speed: 165 * ENEMY_SPEED_SCALE(w), color: PALETTE.splitterBody, exp: 1 });
+export const SPLITTER_CHILD = w => ({ hp: (8 + w * 3) * ENEMY_SCALE(w), r: 5, speed: 165 * ENEMY_SPEED_SCALE(w), color: PALETTE.splitterBody, exp: 1.5 });
 
 /** 精英单位：随波次概率提升，血厚、体型大、经验多，外观带金色环（前 3 波不出，避免开局尖刺） */
 export const ELITE = {
@@ -376,7 +379,10 @@ export const CHEST_MAGNET_RANGE = 620;
 
 /** 曲线与常量 */
 export const WAVE_LEN = 20;
-export const MAX_ENEMY = 420;
+/* 同屏敌人上限（可读性 #10 的核心旋钮）：实测 420 时会出现"视野里 410 只怪 + 266 发弹幕"的瞬间，
+   占屏 6.1% 像素、400 个移动物体 —— 无论配色与外形怎么设计都读不清。
+   260 是"still 有压迫感但每个单位都还能被眼睛跟踪"的量级。 */
+export const MAX_ENEMY = 260;
 /**
  * 敌方弹幕硬上限：扇形弹解锁后弹量会指数膨胀（实测第 14 波曾冲到 867 发）——
  * 既卡性能，也直接毁掉可读性（"元素混乱"）。精英/首领的环形弹幕保留额外额度，
@@ -401,8 +407,13 @@ export const SPAWN = {
   /**
    * 每秒生成数 = 基础曲线 × 开局渐入系数。
    * 案例共识：0–3 分钟温和（教学节奏），3–10 分钟线性加压，10 分钟后交给敌方血量成长制造终局。
+   * 上限从 20/s 收到 13/s（可读性 #10）：20/s 会让同屏常年顶在上限上，
+   * 屏幕上永远是"一堵墙"；13/s 让击杀节奏能跟上、画面有呼吸，压力交给敌血与机制。
+   * 对应地敌人经验上调（见各类型的 exp），保证 XP 经济不因生成变慢而缩水。
    */
-  rate: w => Math.min(20, 2 + w * 1.05),
+  /* 早期渐入也调快了一点：实测把上限从 20 收到 13 后，第 20 波前后出现过"等级跟不上、
+     死在 6.8 分钟"的早死局 —— 少 35% 的怪等于少 35% 的经验收入，前中期要补回来。 */
+  rate: w => Math.min(13, 2.4 + w * 0.9),
   /** 开局渐入：t=0 时 0.5 倍，110 秒后拉满 */
   ramp: t => Math.min(1, 0.5 + t / 110),
   /** 每帧最多处理多少次生成（防止一帧内突发） */
