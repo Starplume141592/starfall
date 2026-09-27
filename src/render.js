@@ -1,6 +1,6 @@
 // 劫波 · 渲染层 —— 只负责画，不改任何状态
 // 画法与单文件 Demo 完全一致（深色霓虹科幻），此处只做搬运与参数化。
-import { WEAPONS, WORLD, ORB, ELITE, ZONE, PALETTE } from './config.js';
+import { WEAPONS, WORLD, ORB, ELITE, ZONE, LASER, PALETTE } from './config.js';
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : (v > b ? b : v));
@@ -539,6 +539,30 @@ export function render(ctx, S) {
   ctx.globalAlpha = 1;
 
   /* 粒子长矛 */
+  /* 预警激光（狙击机）：线宽由细到粗、亮度由暗到亮地"充满" ——
+     玩家一眼能读出"线在哪 + 还有多久"，这比任何配色都更能解决"元素混乱"。 */
+  for (const e of G.enemies) {
+    if (e.state !== 'aim' || e.type !== 'sniper') continue;
+    if (!cull(e.x, e.y, 80)) continue;
+    const k = clamp(e.charge || 0, 0, 1);
+    const ex = Math.cos(e.aimAngle), ey = Math.sin(e.aimAngle);
+    const ex2 = e.x + ex * LASER.range, ey2 = e.y + ey * LASER.range;
+    ctx.globalAlpha = 0.18 + 0.35 * k;
+    ctx.strokeStyle = LASER.color;
+    ctx.lineWidth = 2 + LASER.width * 2 * k;
+    ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(ex2, ey2); ctx.stroke();
+    ctx.globalAlpha = 0.5 + 0.5 * k;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1 + 2 * k;
+    ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(ex2, ey2); ctx.stroke();
+    /* 枪口充能环：让"是谁在瞄我"也有答案 */
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = LASER.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r + 4 + 4 * (1 - k), 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
   for (const bm of G.beams) {
     if (!cull(bm.x, bm.y, 60) && !cull(bm.x + Math.cos(bm.angle) * bm.len, bm.y + Math.sin(bm.angle) * bm.len, 60)) continue;
     const a = clamp(bm.life / bm.maxLife, 0, 1);

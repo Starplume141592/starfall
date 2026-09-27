@@ -250,7 +250,29 @@ export const ENEMY_TYPES = {
   tank: { name: '重装机兵', hp: w => (55 + w * 22) * ENEMY_SCALE(w), spd: 72, r: 12, color: PALETTE.tankBody, exp: 6 },
   triangle: { name: '突袭机', hp: w => (18 + w * 8) * ENEMY_SCALE(w), spd: 112, r: 8, color: PALETTE.fastBody, exp: 3 },
   splitter: { name: '分裂机', hp: w => (36 + w * 16) * ENEMY_SCALE(w), spd: 84, r: 10, color: PALETTE.splitterBody, exp: 4 },
-  shooter: { name: '炮塔机', hp: w => (20 + w * 8) * ENEMY_SCALE(w), spd: 84, r: 7, color: PALETTE.shooterBody, exp: 3 }
+  shooter: { name: '炮塔机', hp: w => (20 + w * 8) * ENEMY_SCALE(w), spd: 84, r: 7, color: PALETTE.shooterBody, exp: 3 },
+  /* 狙击机：不追人，保持距离蓄力预警激光 —— 威胁来自"你必须打断它或离开射线" */
+  sniper: { name: '狙击机', hp: w => (26 + w * 10) * ENEMY_SCALE(w), spd: 62, r: 8, color: PALETTE.shooterBody, exp: 5 }
+};
+
+/**
+ * 预警激光（#13）：先画一条会"充满"的预警线（1.0 秒），充满后瞬发贯穿伤害。
+ * 可读性铁律：预警必须让玩家清楚看到"线在哪、还有多久"，所以是**线宽从细到粗 + 亮度渐强**，
+ * 而不是一根忽明忽暗的光束；开火后留下的实光束只持续 0.18 秒（是"已发生"的反馈，不是威胁本身）。
+ */
+export const LASER = {
+  minWave: 14,      // 从第 14 波开始混入狙击机
+  charge: 1.0,      // 预警时长
+  cd: 5.0,          // 两次瞄准之间的间隔
+  width: 15,        // 判定半宽（玩家中心到射线的距离小于它就算命中）
+  range: 1000,
+  /* 伤害/出现率/并发都收过一轮：初版（2.4 倍、6% 出现率、无并发上限）实测把对局
+     从 800-880 秒压到 544-640 秒，激光承伤占了几乎全部致死来源 —— 太强了。
+     它是"逼你走位"的机制，不该是"清空血条"的机制。 */
+  dmgMul: 1.3,
+  maxAim: 3,        // 同时最多 3 台处于预瞄状态（保证玩家永远能一眼看完所有预警线）
+  maxBeams: 6,      // 同时存在的实光束上限（纯视觉资源，防堆积）
+  color: PALETTE.enemyBullet   // 与敌方弹幕同色：敌人造成的一切都是同一种红
 };
 export const enemyDamage = w => (3.5 + w * 0.55) * ENEMY_DMG_SCALE(w);
 

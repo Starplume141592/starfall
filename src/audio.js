@@ -98,6 +98,8 @@ export function createAudio() {
       tone({ freq: 660, to: 1980, dur: 0.5, type: 'sine', gain: 0.06, delay: 0.05 });
     },
     bossWarn() { tone({ freq: 110, to: 78, dur: 0.7, type: 'sawtooth', gain: 0.09 }); },
+    /** 预警提示音（狙击机瞄准你时）：短促上滑的高音，与视觉预警同时给 —— 可读性优先于惊喜 */
+    warn() { if (allow(1)) tone({ freq: 1500, to: 2200, dur: 0.08, type: 'square', gain: 0.03 }); },
     hurt() {
       noise({ dur: 0.16, gain: 0.12, cut: 1800, cutTo: 120 });
       tone({ freq: 220, to: 90, dur: 0.18, type: 'square', gain: 0.05 });

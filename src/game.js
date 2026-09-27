@@ -1,7 +1,7 @@
 // 劫波 · 游戏逻辑与主循环（原生 ES module，无打包器、无依赖、无资源文件）
 // 所有数值来自 config.js；绘制全部交给 render.js。行为与单文件 Demo 完全一致。
 import {
-  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, ZONE, ELITE, SHOOTER_BULLET,
+  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, ZONE, LASER, ELITE, SHOOTER_BULLET,
   ENEMY_SPEED_SCALE,
   WAVE_LEN, MAX_ENEMY, MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE, SPAWN, ENEMY_ABILITY, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
@@ -294,6 +294,10 @@ function buildEnemy(type, x, y, w) {
   };
   if (type === 'triangle') { e.dashCd = rand(0.8, 2.0); e.dashTimer = 0; e.isDashing = false; e.dashVx = 0; e.dashVy = 0; }
   if (type === 'shooter') { e.shootCd = rand(0.5, 1.5); }
+  if (type === 'sniper') {
+    /* 错开首次瞄准时间：否则同批狙击机会在同一帧集体开火（既不可读也不公平） */
+    e.state = 'idle'; e.stateTime = rand(1.2, LASER.cd); e.cdMul = 1; e.charge = 0; e.aimAngle = 0;
+  }
   return e;
 }
 
@@ -342,6 +346,8 @@ function spawnEnemy(forceElite) {
     if (roll < 0.10) type = 'triangle';
     else if (w >= 4 && roll < 0.16) type = 'splitter';
     else if (w >= 5 && roll < 0.23) type = 'shooter';
+    /* 狙击机：14 波起混入（预警激光的载体，出现率低但威胁高 —— 逼你打断瞄准或换位） */
+    else if (w >= LASER.minWave && roll < 0.26) type = 'sniper';
     else if (roll < 0.42) type = 'fast';
     else if (w >= 5 && roll < 0.55) type = 'tank';
   }
@@ -1232,6 +1238,10 @@ function update(dt) {
   }
 
   /* 敌方单位 */
+  /* 狙击机并发预瞄数：每帧统计一次（O(n)）。
+     绝不能在每只怪内部再扫一遍 G.enemies —— 那会变成 O(n²)，撞碎"不做全表扫描"的性能契约。 */
+  let aimingSnipers = 0;
+  for (const en of G.enemies) if (en.type === 'sniper' && en.state === 'aim') aimingSnipers++;
   for (let i = G.enemies.length - 1; i >= 0; i--) {
     const e = G.enemies[i];
     if (e.dead) { G.enemies.splice(i, 1); continue; }
@@ -1493,6 +1503,47 @@ function update(dt) {
           }
         } else {
           fireBullet(e.x, e.y, base, b.spd, b.r, b.dmg, b.life);
+        }
+      }
+    }
+    /* 狙击机：保持距离 → 预警激光（先亮线再开火） */
+    else if (e.type === 'sniper') {
+      const keep = 420;
+      if (d < keep - 60) { e.x -= dx / d * spd * dt; e.y -= dy / d * spd * dt; }
+      else if (d > keep + 80) { e.x += dx / d * spd * dt; e.y += dy / d * spd * dt; }
+      if (e.state === 'aim') {
+        e.stateTime -= dt;
+        /* 预警期间缓慢锁定：射线角度追着玩家转，但转得比玩家跑得慢 —— 所以能靠横移甩开 */
+        const want = Math.atan2(dy, dx);
+        let diff = want - e.aimAngle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        e.aimAngle += clamp(diff, -2.2 * dt, 2.2 * dt);
+        e.charge = 1 - Math.max(0, e.stateTime) / LASER.charge;
+        if (e.stateTime <= 0) {
+          /* 开火：射线起点是敌人、方向是锁定后的角度（不是开火瞬间的玩家位置，否则等于必然命中） */
+          const ex = Math.cos(e.aimAngle), ey = Math.sin(e.aimAngle);
+          if (G.beams.length < LASER.maxBeams) {
+            G.beams.push({ x: e.x, y: e.y, angle: e.aimAngle, len: LASER.range, life: 0.18, maxLife: 0.18, color: LASER.color, thin: true });
+          }
+          /* 命中判定：玩家中心到射线的垂距 < 判定半宽，且投影在射程内 */
+          const rx = player.x - e.x, ry = player.y - e.y;
+          const proj = rx * ex + ry * ey;
+          const perp = Math.abs(rx * -ey + ry * ex);
+          if (proj > 0 && proj < LASER.range && perp < LASER.width + player.r) {
+            damagePlayer(e.dmg * LASER.dmgMul, 'laser');
+            flash(.2, '255,59,48');
+          }
+          burst(e.x, e.y, LASER.color, 8, 200);
+          e.state = 'idle'; e.stateTime = LASER.cd * e.cdMul;
+        }
+      } else {
+        e.stateTime -= dt;
+        /* 并发上限：同时预瞄的狙击机不超过 LASER.maxAim 台 —— 公平性来自"玩家能看完所有预警" */
+        if (e.stateTime <= 0 && d < LASER.range * 0.9 && aimingSnipers < LASER.maxAim) {
+          e.state = 'aim'; e.stateTime = LASER.charge; e.charge = 0;
+          e.aimAngle = Math.atan2(dy, dx);
+          audio.warn();          // 听觉预警：和视觉预警同时给（可读性 > 惊喜）
         }
       }
     }
