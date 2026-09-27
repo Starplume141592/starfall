@@ -617,11 +617,23 @@ body.mobile #hud {
   padding-left: calc(8px + env(safe-area-inset-left, 0px));
   padding-right: calc(8px + env(safe-area-inset-right, 0px));
 }
-
-/* HUD 适度放大（仅这一层用 --ui，上限收紧到 1.35，避免挤掉战场可视面积） */
-body.mobile #stats { font-size: calc(12px * var(--ui, 1)); gap: calc(12px * var(--ui, 1)); }
-body.mobile #stats i { font-size: calc(9px * var(--ui, 1)); }
-body.mobile #clock b { font-size: calc(26px * var(--ui, 1)); }
+/* HUD：手机上要**变小**，不是变大。
+   舞台横屏约 693x390，而 #topbar 固定 296px 宽（占 43% 宽度、纵向约 120px 占 31% 高度）——
+   上一版还乘了 1.35 倍 --ui，实测玩家反馈"左上角面板太大"。这里整体压到约 2/3，
+   并去掉手机上用不到的项（"视角"只能靠滚轮调，触摸端根本没有滚轮）。 */
+body.mobile #topbar { width: 196px; padding: 6px 8px 5px; }
+body.mobile .bar-row { gap: 5px; margin-bottom: 5px; }
+body.mobile .bar-row .tag { width: 21px; font-size: 9px; letter-spacing: 0.06em; }
+body.mobile .track { height: 7px; }
+body.mobile .track.slim { height: 5px; }
+body.mobile .bar-row .val { min-width: 44px; font-size: 9px; }
+body.mobile #stats { gap: 7px; padding-top: 5px; margin-top: 1px; font-size: 10px; }
+body.mobile #stats i { font-size: 8.5px; letter-spacing: 0.04em; }
+body.mobile #stats span:nth-child(5) { display: none; }      /* 视角：手机没有滚轮 */
+body.mobile #loadout { gap: 4px; margin-top: 5px; padding-top: 5px; }
+body.mobile #loadout span { width: 14px; height: 14px; }
+body.mobile #clock b { font-size: 22px; }
+body.mobile #clock span { font-size: 9px; }
 
 /* 面板：取消 640px 最小宽度 + 允许纵向滚动（手机上高度只有 ~390px） */
 body.mobile #panel {
