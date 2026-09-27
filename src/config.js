@@ -204,7 +204,10 @@ export const ENEMY_SPEED_SCALE = w => 1 + Math.min(1.4, Math.max(0, w - 5) * 0.0
  *   B0 背景装饰 灰阶 14–75   —— 只提供纵深，不许跟任何战斗信息抢注意力
  *   B1 最高白核 灰阶 230+    —— 只有"顶点"用：玩家核心、即将命中的敌弹核心
  *   B2 玩家层   灰阶 190–200 —— 玩家与玩家光环，永远最亮的那一档
- *   B3 危险信号 灰阶 90–190（暖琥珀）—— 能杀你的东西：敌方弹幕、炮塔、预警
+ *   B3 危险信号 灰阶 128–190（暖色）—— 能杀你的东西：敌方弹幕、炮塔、预警。
+ *      注意：敌方弹幕现在是**红** `#FF3B30`（玩家指定），不是琥珀。红在近黑底上对
+ *      红绿色盲的可读性明显更差（实测对比度 琥珀 9.68 → 红 2.48），靠"白热核心"兜着可见性；
+ *      想换回琥珀只改 PALETTE.enemyBullet / enemyBulletCore 两处。
  *   B4 前景事件 灰阶 128–156 —— 经验碎片、道具、Boss
  *   B5 背景音   灰阶 80–178（冷灰/中性）—— 小兵。故意压暗：它们靠数量和形状说话，不该抢眼球
  * 改颜色请跑 `node bench/palette-check.mjs`，跨带明度差 <20 的会被断言打出来。
@@ -213,7 +216,7 @@ export const PALETTE = {
   void: '#04060A', deep: '#08101C', grid: '#0E1B2E', far: '#14283F', mid: '#1C3550', near: '#24425F',
   playerCore: '#FFFFFF', playerHull: '#EAF6FF', playerRing: '#2BD9FF', playerTrail: '#1E9FD0',
   allyBullet: '#2F9BC4', allyBeam: '#8FE8FF',
-  enemyBulletCore: '#FFE0A8', enemyBullet: '#FFB020', telegraph: '#D55E00',
+  enemyBulletCore: '#FFE6DC', enemyBullet: '#FF3B30', telegraph: '#D55E00',
   chaffBody: '#5B6E8C', chaffRim: '#93A9C9',
   fastBody: '#B8702F', fastRim: '#E89A45',
   tankBody: '#46505F', tankRim: '#A6B5C9',
