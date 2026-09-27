@@ -8,7 +8,7 @@ import {
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
   PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, SHOP_ITEMS, CREDIT, SHOP_INFLATE,
-  VERSION, REPO_URL, ISSUE_URL, FEEDBACK_KINDS,
+  VERSION, REPO_URL, ISSUE_URL, FEEDBACK_KINDS, FEEDBACK_MAIL,
   expNeed, mkName
 } from './config.js';
 
@@ -1124,6 +1124,24 @@ function feedbackBody() {
   return `【${kind.tag}】\n\n${text}\n\n---\n以下为自动附加的诊断信息，请勿删除：\n${collectDiagnostics()}\nUA: ${navigator.userAgent}`;
 }
 
+/** 拼出 mailto: 链接（抽成独立函数：便于自检、也避免"点了没反应"时无从复查） */
+function feedbackMailUrl() {
+  const kind = FEEDBACK_KINDS.find(k => k.id === feedbackKind) || FEEDBACK_KINDS[0];
+  const desc = (feedbackText || '').trim().slice(0, 40).replace(/\s+/g, ' ');
+  const subject = `[星陨][${kind.tag}] ${desc || '玩家反馈'}`;
+  const body = feedbackBody();
+  return `mailto:${FEEDBACK_MAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.slice(0, 1800))}`;
+}
+
+/** 邮件提交（默认路径）：调起玩家的邮件应用，收件人/主旨/正文全部预填好。
+ *  用 location.href 而不是 window.open —— mailto 会被弹窗拦截器当广告拦掉。
+ *  mailto 正文各家客户端容忍度不同（约 2000 字符），所以截断到 1800 并提示用"复制报告"发全文。 */
+function submitFeedbackMail() {
+  pushFeedbackLog({ t: Date.now(), kind: feedbackKind, text: feedbackText, diag: collectDiagnostics() });
+  location.href = feedbackMailUrl();
+  showFeedbackSent(`已调起邮件应用 · 收件人 ${FEEDBACK_MAIL} · 主旨与正文（含诊断）都填好了，直接发送即可`);
+}
+
 function submitFeedback() {
   const kind = FEEDBACK_KINDS.find(k => k.id === feedbackKind) || FEEDBACK_KINDS[0];
   const body = feedbackBody();
@@ -1170,20 +1188,22 @@ function showFeedback(prefill) {
   const chips = FEEDBACK_KINDS.map(k =>
     `<button class="chip${k.id === feedbackKind ? ' on' : ''}" data-kind="${k.id}">${k.name}</button>`).join('');
   panel.innerHTML = `<h2>意见收集 // v${VERSION}</h2>
-    <p class="sub">选一个分类、写几句就行 —— 描述会自动附带诊断信息（机型 / 波次 / 构筑 / 浏览器），你不用手打环境</p>
+    <p class="sub">选一个分类、写几句就行 —— 报告会自动附带诊断信息（机型 / 波次 / 构筑 / 浏览器），你不用手打环境</p>
     <div class="chips">${chips}</div>
-    <textarea id="fbText" rows="5" maxlength="600" placeholder="例如：第 20 波之后弹幕太密看不清 / 天基炮经常打空 / 想要 XX 武器……">${feedbackText.replace(/</g, '&lt;')}</textarea>
+    <textarea id="fbText" rows="4" maxlength="600" placeholder="例如：第 20 波之后弹幕太密看不清 / 天基炮经常打空 / 想要 XX 武器……">${feedbackText.replace(/</g, '&lt;')}</textarea>
     <p class="sub fbdiag">随附诊断：${collectDiagnostics().split('\n')[1] || ''}</p>
-    <button class="btn" id="fbGit">提交到 GitHub</button>
+    <button class="btn" id="fbMail">用邮件发送 → ${FEEDBACK_MAIL}</button>
     <button class="btn alt" id="fbCopy">复制报告</button>
+    <button class="btn alt" id="fbGit">提交到 GitHub</button>
     <button class="btn alt" id="fbCancel">返回</button>
-    <p class="sub fblog">本地也留了一份（最近 ${loadFeedbackLog().length} 条）· 没有后端，所以走 GitHub 或剪贴板</p>`;
+    <p class="sub fblog">邮件按钮会调起本机邮件应用（手机上是 QQ 邮箱等 App），主旨与正文都已填好，点发送即可。<br>若这台设备没配邮件应用：用「复制报告」，手动寄到 ${FEEDBACK_MAIL} 也一样。本地也留了最近 ${loadFeedbackLog().length} 条。</p>`;
   overlay.classList.add('show');
   panel.querySelectorAll('.chip').forEach(el => {
     el.onclick = () => { feedbackKind = el.dataset.kind; if (fbSaveText()) showFeedback(); };
   });
-  document.getElementById('fbGit').onclick = () => { if (fbSaveText()) submitFeedback(); };
+  document.getElementById('fbMail').onclick = () => { if (fbSaveText()) submitFeedbackMail(); };
   document.getElementById('fbCopy').onclick = () => { if (fbSaveText()) copyFeedback(); };
+  document.getElementById('fbGit').onclick = () => { if (fbSaveText()) submitFeedback(); };
   document.getElementById('fbCancel').onclick = closePanel;
 }
 
@@ -2546,4 +2566,6 @@ window.__game = {
   get quality() { return qualityLevel; },
   setQuality(lv) { setQuality(lv, true); return qualityLevel; },
   get isTouch() { return IS_TOUCH; },
+  /** 反馈：查看当前会生成的邮件链接（自检用，不会触发发送） */
+  get feedbackMail() { return feedbackMailUrl(); },
 };
