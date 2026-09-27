@@ -1,7 +1,7 @@
 // 劫波 · 游戏逻辑与主循环（原生 ES module，无打包器、无依赖、无资源文件）
 // 所有数值来自 config.js；绘制全部交给 render.js。行为与单文件 Demo 完全一致。
 import {
-  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, ELITE, SHOOTER_BULLET,
+  WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, ZONE, ELITE, SHOOTER_BULLET,
   ENEMY_SPEED_SCALE,
   WAVE_LEN, MAX_ENEMY, MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE, SPAWN, ENEMY_ABILITY, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
@@ -162,7 +162,7 @@ function reset() {
     dmgAcc: 0, dmgSamples: [], lastDmgAt: 0, dmgTaken: {},     // 调试用：每秒伤害/承伤统计
     cam: { x: 0, y: 0 },          // 镜头左上角（世界坐标）
     enemies: [], bullets: [], beams: [], enemyBullets: [], pickups: [],
-    orbs: [], texts: [], parts: [], bolts: [], rings: [],
+    orbs: [], texts: [], parts: [], bolts: [], rings: [], zones: [],
     paused: false, over: false, combo: 0, comboTimer: 0, comboBest: 0
   };
   pendingLevels = 0; shake = 0; hitStop = 0; flashA = 0;
@@ -362,22 +362,39 @@ function spawnBoss() {
   else if (side === 1) { x = R; y = clamp(G.cam.y + viewH() / 2, 60, WORLD.h - 60); }
   else if (side === 2) { x = clamp(G.cam.x + viewW() / 2, 60, WORLD.w - 60); y = B; }
   else { x = L; y = clamp(G.cam.y + viewH() / 2, 60, WORLD.h - 60); }
-  const def = (w % 10 === 0) ? BOSS_TYPES.summoner : BOSS_TYPES.charger;
+  const def = (w % 20 === 0) ? BOSS_TYPES.juggernaut
+    : (w % 15 === 0) ? BOSS_TYPES.spinner
+      : (w % 10 === 0) ? BOSS_TYPES.summoner : BOSS_TYPES.charger;
   const hp = def.hp(w);
   const boss = {
     id: ++uid, x, y, r: def.r, hp, maxHp: hp, speed: def.spd * ENEMY_SPEED_SCALE(w), dmg: def.dmg(w),
     color: def.color, exp: def.exp, type: 'boss', variant: def.variant, bossName: def.name,
     kx: 0, ky: 0, orbCd: 0, flash: 0, dead: false, boss: true,
     // 劫掠者：追击 → 充能 → 突进 → 瘫痪；裂空者：追击 → 蓄能 → 弹幕 → 召唤 → 虚弱
+    // 旋翼者：追击 → 蓄能 → 螺旋弹幕 → 虚弱；壁垒者：追击 → 封锁 → 突进 → 瘫痪
     state: 'chase', stateTime: def.variant === 'summoner' ? 2.4 : 3.0,
     chargeAngle: 0, chargeVx: 0, chargeVy: 0,
-    vulnMul: 1
+    vulnMul: 1, phase: 0, spiralA: 0, cdMul: 1
   };
   G.enemies.push(boss);
   audio.bossWarn();
   addText(x, y - 60, `警告：${def.name} 接近`, def.color, 24);
   flash(.4, '240,101,149');
   shake = Math.max(shake, 12);
+}
+
+/** 区域封锁：在目标附近落 n 个预警圈（错开半径，避免完全重叠成一个点） */
+function spawnZones(cx, cy, n, dmg) {
+  for (let i = 0; i < n; i++) {
+    if (G.zones.length >= ZONE.max) return;
+    const a = rand(0, Math.PI * 2);
+    const dist = i === 0 ? 0 : rand(60, 180);       // 第一个直接压在玩家脚下，其余错开逼走位
+    G.zones.push({
+      x: clamp(cx + Math.cos(a) * dist, 20, WORLD.w - 20),
+      y: clamp(cy + Math.sin(a) * dist, 20, WORLD.h - 20),
+      r: ZONE.r, t: ZONE.telegraph, dmg, fired: false, life: 0
+    });
+  }
 }
 
 /* ==================== 特效 ==================== */
@@ -1248,8 +1265,84 @@ function update(dt) {
       }
     }
 
+    /* Boss 阶段变化（#14）：过线换招 —— 同一个 boss 有三个阶段，越打越凶 */
+    if (e.boss && e.phase < BOSS_PHASE.length && e.hp / e.maxHp <= BOSS_PHASE[e.phase].at) {
+      const ph = BOSS_PHASE[e.phase];
+      e.phase++;
+      e.speed *= ph.spd;
+      e.cdMul = ph.cd;
+      addText(e.x, e.y - 70, ph.label, '#ff9f1c', 22);
+      flash(.3, '255,159,28');
+      shake = Math.max(shake, 14);
+      hitStop = Math.max(hitStop, 0.06);
+      /* 变身同时放一圈弹幕：阶段转换本身要有威胁，而不是白送一段硬直 */
+      const pb = SHOOTER_BULLET(G.wave);
+      const pn = 12;
+      for (let k = 0; k < pn; k++) {
+        fireBullet(e.x, e.y, k * Math.PI * 2 / pn + G.t, pb.spd * 1.15, pb.r + 1, e.dmg * 0.5, 6, 'bossBullet');
+      }
+    }
+
+    /* 旋翼者：追击 → 蓄能 → 螺旋弹幕（持续 3 秒，边转边射）→ 虚弱 */
+    if (e.boss && e.variant === 'spinner') {
+      e.stateTime -= dt;
+      if (e.state === 'chase') {
+        e.x += dx / d * spd * dt;
+        e.y += dy / d * spd * dt;
+        if (e.stateTime <= 0) { e.state = 'prep'; e.stateTime = 0.8; addText(e.x, e.y - 56, '旋翼启动...', PALETTE.bossRim, 18); }
+      } else if (e.state === 'prep') {
+        e.x += dx / d * spd * 0.25 * dt;
+        e.y += dy / d * spd * 0.25 * dt;
+        if (e.stateTime <= 0) { e.state = 'spiral'; e.stateTime = 3.0; e.spiralA = Math.atan2(dy, dx); }
+      } else if (e.state === 'spiral') {
+        /* 三臂螺旋：每 0.1 秒推一轮，方向持续旋转 —— 应对方式是"绕圈跑"，不是站桩躲 */
+        e.spiralA += dt * 2.2;
+        e.spiralShot = (e.spiralShot || 0) - dt;
+        if (e.spiralShot <= 0) {
+          e.spiralShot = 0.1;
+          const bdef = SHOOTER_BULLET(G.wave);
+          for (let k = 0; k < 3; k++) {
+            fireBullet(e.x, e.y, e.spiralA + k * Math.PI * 2 / 3, bdef.spd * 1.25, bdef.r, e.dmg * 0.35, 5, 'bossBullet');
+          }
+        }
+        if (e.stateTime <= 0) { e.state = 'stunned'; e.stateTime = 1.0; e.vulnMul = 2.0; }
+      } else if (e.state === 'stunned') {
+        if (e.stateTime <= 0) { e.state = 'chase'; e.stateTime = 2.6 * e.cdMul; e.vulnMul = 1; }
+      }
+    }
+    /* 壁垒者：追击 → 区域封锁（在玩家周围落 3 个预警圈）→ 突进 → 瘫痪 */
+    else if (e.boss && e.variant === 'juggernaut') {
+      e.stateTime -= dt;
+      if (e.state === 'chase') {
+        e.x += dx / d * spd * dt;
+        e.y += dy / d * spd * dt;
+        if (e.stateTime <= 0) { e.state = 'slam'; e.stateTime = 0.9; addText(e.x, e.y - 60, '封锁部署...', '#f06595', 18); }
+      } else if (e.state === 'slam') {
+        e.x += dx / d * spd * 0.2 * dt;
+        e.y += dy / d * spd * 0.2 * dt;
+        if (e.stateTime <= 0) {
+          spawnZones(player.x, player.y, 3, e.dmg * ZONE.dmgMul);
+          e.state = 'charge_prep'; e.stateTime = 0.7;
+          e.chargeAngle = Math.atan2(dy, dx);
+        }
+      } else if (e.state === 'charge_prep') {
+        e.x += dx / d * spd * 0.15 * dt;
+        e.y += dy / d * spd * 0.15 * dt;
+        if (e.stateTime <= 0) {
+          e.state = 'charging'; e.stateTime = 1.1;
+          e.chargeVx = Math.cos(e.chargeAngle) * 820;
+          e.chargeVy = Math.sin(e.chargeAngle) * 820;
+          shake = Math.max(shake, 10);
+        }
+      } else if (e.state === 'charging') {
+        e.x += e.chargeVx * dt; e.y += e.chargeVy * dt;
+        if (e.stateTime <= 0) { e.state = 'stunned'; e.stateTime = 1.3; e.vulnMul = 2.4; }
+      } else if (e.state === 'stunned') {
+        if (e.stateTime <= 0) { e.state = 'chase'; e.stateTime = 3.0 * e.cdMul; e.vulnMul = 1; }
+      }
+    }
     /* 陨级单位状态机 */
-    if (e.boss && e.variant === 'summoner') {
+    else if (e.boss && e.variant === 'summoner') {
       /* 裂空者：追击 → 蓄能 → 环形弹幕 → 召唤无人机 → 虚弱 */
       e.stateTime -= dt;
 
@@ -1403,10 +1496,13 @@ function update(dt) {
         }
       }
     }
-    /* 其余：直线追踪 */
+    /* 其余：直线追踪 + 包夹（#12）—— 每只怪一个固定的侧向偏置，
+       远距离时向两翼展开，避免所有怪挤在同一条直线上（那样看起来是一坨、也不构成包围） */
     else {
-      e.x += dx / d * spd * dt;
-      e.y += dy / d * spd * dt;
+      if (e.flank === undefined) e.flank = rand(-1, 1);
+      const lat = d > 190 ? 0.55 * e.flank : 0;
+      e.x += (dx / d * spd - dy / d * spd * lat) * dt;
+      e.y += (dy / d * spd + dx / d * spd * lat) * dt;
     }
 
     e.x += e.kx * dt; e.y += e.ky * dt;
@@ -1427,6 +1523,29 @@ function update(dt) {
       damagePlayer(b.dmg, b.src || 'bullet');
       burst(b.x, b.y, b.color, 6, 180);
       G.enemyBullets.splice(i, 1);
+    }
+  }
+
+  /* 区域封锁：先画预警圈（telegraph），到点爆炸；圈内玩家吃伤害 + 击退 */
+  for (let i = G.zones.length - 1; i >= 0; i--) {
+    const z = G.zones[i];
+    if (!z.fired) {
+      z.t -= dt;
+      if (z.t <= 0) {
+        z.fired = true; z.life = ZONE.life;
+        const dx = player.x - z.x, dy = player.y - z.y;
+        const d = Math.hypot(dx, dy) || 1;
+        if (d < z.r + player.r) {
+          damagePlayer(z.dmg, 'zone');
+          player.vx += dx / d * 260; player.vy += dy / d * 260;    // 炸飞，给一个"被推走"的反馈
+        }
+        burst(z.x, z.y, '#f06595', 26, 380);
+        shake = Math.max(shake, 9);
+        flash(.16, '240,101,149');
+      }
+    } else {
+      z.life -= dt;
+      if (z.life <= 0) G.zones.splice(i, 1);
     }
   }
 

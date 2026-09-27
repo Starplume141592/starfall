@@ -1,6 +1,6 @@
 // 劫波 · 渲染层 —— 只负责画，不改任何状态
 // 画法与单文件 Demo 完全一致（深色霓虹科幻），此处只做搬运与参数化。
-import { WEAPONS, WORLD, ORB, ELITE, PALETTE } from './config.js';
+import { WEAPONS, WORLD, ORB, ELITE, ZONE, PALETTE } from './config.js';
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : (v > b ? b : v));
@@ -452,6 +452,34 @@ export function render(ctx, S) {
     ctx.fillStyle = ORB.core;
     ctx.fillRect(-s / 4, -s / 4, s / 2, s / 2);
     ctx.restore();
+  }
+
+  /* 区域封锁（壁垒者）：预警圈 -> 收缩到点 -> 爆炸。
+     可读性要求：预警必须是"能一眼看出还有多久"的收缩圈，而不是闪烁的色块。 */
+  for (const z of G.zones) {
+    if (!cull(z.x, z.y, z.r + 40)) continue;
+    if (!z.fired) {
+      const k = clamp(z.t / ZONE.telegraph, 0, 1);
+      const rr = z.r * (0.35 + 0.65 * k);
+      ctx.save();
+      ctx.globalAlpha = 0.20;
+      ctx.fillStyle = '#f06595';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = '#ff8fb1';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(z.x, z.y, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+      drawGlow(ctx, z.x, z.y, '#f06595', 26 * k + 8, 0.5);
+    } else {
+      const k = clamp(z.life / ZONE.life, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = 0.75 * k;
+      ctx.fillStyle = '#ffd6e5';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r * (1.05 - 0.05 * k), 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      drawGlow(ctx, z.x, z.y, '#f06595', 60 * k + 20, 1);
+    }
   }
 
   /* 掉落物：纳米修复包 / 引力场发生器 / 战术弹 */

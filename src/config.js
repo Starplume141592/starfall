@@ -263,7 +263,7 @@ export const ELITE = {
   hpMul: 3.2, rMul: 1.35, expMul: 4, dmgMul: 1.4, color: PALETTE.elite
 };
 
-/** 陨级装甲核心：两种型号，按波次交替 */
+/** 陨级装甲核心：四种型号，按波次选型（15 波旋翼者 / 20 波壁垒者优先） */
 export const BOSS_TYPES = {
   charger: {
     name: '劫掠者', variant: 'charger',
@@ -274,8 +274,32 @@ export const BOSS_TYPES = {
     name: '裂空者', variant: 'summoner',
     hp: w => (520 + w * 240) * ENEMY_SCALE(w), spd: 82, r: 22, color: PALETTE.bossBody, exp: 90,
     dmg: w => (12 + w * 1.0) * ENEMY_DMG_SCALE(w)
+  },
+  /* 旋翼者：旋转螺旋弹幕 —— 靠"持续横移"应对，而不是靠躲一波爆发 */
+  spinner: {
+    name: '旋翼者', variant: 'spinner',
+    hp: w => (480 + w * 220) * ENEMY_SCALE(w), spd: 88, r: 21, color: PALETTE.bossBody, exp: 80,
+    dmg: w => (13 + w * 1.1) * ENEMY_DMG_SCALE(w)
+  },
+  /* 壁垒者：区域封锁 —— 直接封掉走位空间，逼你提前规划路线（不靠血量施压） */
+  juggernaut: {
+    name: '壁垒者', variant: 'juggernaut',
+    hp: w => (620 + w * 260) * ENEMY_SCALE(w), spd: 70, r: 24, color: PALETTE.bossBody, exp: 110,
+    dmg: w => (16 + w * 1.3) * ENEMY_DMG_SCALE(w)
   }
 };
+
+/**
+ * Boss 阶段变化（#14）：血量过线就换招、加速、缩短冷却 —— 让同一场战斗有三个"读法"。
+ * 数值只做温和上浮，真正的区别在"解锁了新招式"。
+ */
+export const BOSS_PHASE = [
+  { at: 0.66, spd: 1.2, cd: 0.8, label: '装甲剥离' },
+  { at: 0.33, spd: 1.35, cd: 0.65, label: '核心过载' }
+];
+
+/** 区域封锁（壁垒者 / 高波精英）：先画预警圈，1.2 秒后爆炸 */
+export const ZONE = { telegraph: 1.2, r: 96, life: 0.35, dmgMul: 1.6, max: 8 };
 
 /** 炮塔机弹丸 */
 export const SHOOTER_BULLET = w => ({ spd: 200, r: 4, dmg: (5 + w * 0.5) * ENEMY_DMG_SCALE(w), life: 5, color: PALETTE.enemyBullet });
