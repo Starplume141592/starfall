@@ -29,7 +29,11 @@ body {
   overflow: hidden;
   outline: 1px solid rgba(88, 166, 255, 0.22);
   box-shadow: 0 0 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(0, 0, 0, 0.6);
+  /* 触摸设备：禁止浏览器把拖动解释成滚动/双指缩放/长按选择（否则摇杆会时断时续） */
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
+#c { display: block; touch-action: none; }
 /* 暗角：交给合成器画（canvas 里省掉一趟全屏填充）。层级压在 HUD 之下、扫描线之上 */
 #vignette {
   position: absolute;
@@ -549,6 +553,21 @@ canvas {
 }
 #fbCorner:hover { color: #dce9ff; border-color: #58a6ff; background: rgba(88, 166, 255, 0.18); }
 #pause .btn { margin-top: 14px; }
+/* 暂停面板里的画质选择 */
+#pause .qrow { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; }
+#pause .qlabel { font-size: 11px; letter-spacing: 0.16em; color: #5d7c9b; }
+#pause .chip.q {
+  padding: 6px 16px;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: #8fb0cf;
+  background: rgba(20, 34, 52, 0.6);
+  border: 1px solid rgba(120, 165, 210, 0.28);
+  cursor: pointer;
+}
+#pause .chip.q:hover { color: #dce9ff; border-color: #58a6ff; }
+#pause .chip.q.on { color: #0a1420; background: #58a6ff; border-color: #58a6ff; font-weight: 700; }
 
 #panel .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; justify-content: center; }
 #panel .chip {
@@ -585,3 +604,123 @@ canvas {
 #panel textarea:focus { outline: none; border-color: #58a6ff; }
 #panel p.sub.fbdiag { color: #7f9dbb; font-size: 11px; }
 #panel p.sub.fblog { color: #5d7c9b; }
+
+/* ============================================================
+   手机 / 触摸适配（布局优先）
+   关键认识：面板里的文字是绝对 px、**不随舞台缩放**，所以手机上真正的问题不是"字太小"，
+   而是"放不下"：舞台在横屏手机上约 700x390，而 #panel 有 min-width:640 + 三张 300px 的卡。
+   因此这里优先解决排版（换行 / 可滚动 / 表格化卡片），只把 HUD 与点击目标适度放大。
+   ============================================================ */
+body.mobile #hint { display: none; }
+#touchHint { display: none; }
+body.mobile #touchHint {
+  display: block;
+  position: absolute;
+  left: 50%;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 220;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(120, 155, 190, 0.6);
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* HUD 与常驻按钮躲开刘海/手势条 */
+body.mobile #hud {
+  padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  padding-left: calc(8px + env(safe-area-inset-left, 0px));
+  padding-right: calc(8px + env(safe-area-inset-right, 0px));
+}
+body.mobile #fbCorner,
+body.mobile #fsBtn {
+  bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+  right: calc(8px + env(safe-area-inset-right, 0px));
+}
+body.mobile #fsBtn { right: calc(66px + env(safe-area-inset-right, 0px)); }
+body.mobile #fbCorner, body.mobile #fsBtn { padding: 8px 13px; font-size: 12px; }
+
+/* HUD 适度放大（仅这一层用 --ui，上限收紧到 1.35，避免挤掉战场可视面积） */
+body.mobile #stats { font-size: calc(12px * var(--ui, 1)); gap: calc(12px * var(--ui, 1)); }
+body.mobile #stats i { font-size: calc(9px * var(--ui, 1)); }
+body.mobile #clock b { font-size: calc(26px * var(--ui, 1)); }
+
+/* 面板：取消 640px 最小宽度 + 允许纵向滚动（手机上高度只有 ~390px） */
+body.mobile #panel {
+  min-width: 0;
+  width: 96%;
+  max-width: 96%;
+  max-height: 94%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 14px 16px;
+}
+body.mobile #panel h2 { font-size: 17px; letter-spacing: 0.14em; }
+body.mobile #panel p.sub { font-size: 11.5px; line-height: 1.5; }
+/* 卡片：从"一行三张固定宽"改成"按可用宽度均分"，一行放得下三张就三张 */
+body.mobile #cards { flex-wrap: wrap; gap: 8px; }
+body.mobile #cards .card,
+body.mobile .card.ship {
+  flex: 1 1 calc(33.333% - 6px);
+  min-width: 0;
+  width: auto;
+  min-height: 0;
+  padding: 9px;
+}
+body.mobile .card .ic { width: 22px; height: 22px; margin-bottom: 6px; }
+body.mobile .card .nm { font-size: 13px; }
+body.mobile .card.ship .nm { font-size: 15px; }
+body.mobile .card .lv { font-size: 10px; padding: 2px 6px; }
+body.mobile .card .ds { font-size: 11px; line-height: 1.45; }
+body.mobile .card .rg b { font-size: 10px; }
+/* 按钮：加大到可点，且允许换行排布 */
+body.mobile .btn { font-size: 12.5px; padding: 11px 18px; margin: 5px 4px 0; }
+body.mobile #panel .chips { gap: 6px; }
+body.mobile #panel .chip { font-size: 11.5px; padding: 9px 13px; }
+body.mobile #panel textarea { font-size: 12.5px; padding: 9px; }
+#fsBtn.hidden { display: none; }
+
+/* 全屏按钮：只在触摸设备显示（桌面浏览器按 F11 就行） */
+#fsBtn {
+  position: absolute;
+  right: 74px;
+  bottom: 12px;
+  z-index: 230;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: rgba(150, 190, 225, 0.75);
+  background: rgba(10, 20, 34, 0.55);
+  border: 1px solid rgba(120, 165, 210, 0.3);
+  cursor: pointer;
+}
+#fsBtn:hover { color: #dce9ff; border-color: #58a6ff; background: rgba(88, 166, 255, 0.18); }
+body:not(.mobile) #fsBtn { display: none; }
+
+/* 竖屏遮挡提示 */
+#rotate {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 8, 14, 0.94);
+  text-align: center;
+  padding: 24px;
+}
+#rotate.show { display: flex; }
+#rotate .rotbox { max-width: 340px; }
+#rotate .phone {
+  font-size: 54px;
+  line-height: 1;
+  color: #58a6ff;
+  animation: rot 2.2s ease-in-out infinite;
+}
+@keyframes rot {
+  0%, 40% { transform: rotate(0deg); }
+  60%, 100% { transform: rotate(-90deg); }
+}
+#rotate h2 { font-size: 20px; letter-spacing: 0.2em; color: #dce9ff; margin: 18px 0 10px; }
+#rotate p { font-size: 13px; line-height: 1.8; color: #8fb0cf; margin: 0; }

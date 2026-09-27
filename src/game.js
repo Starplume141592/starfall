@@ -103,6 +103,39 @@ function resize() {
   canvas.width = Math.round(cssW * DPR);
   canvas.height = Math.round(cssH * DPR);
   ctx.setTransform(DPR * scale, 0, 0, DPR * scale, 0, 0);
+  /* 移动端 UI 缩放：地形/单位是固定逻辑分辨率，但 HUD 与面板是 CSS 像素 ——
+     手机上 stage 被缩到很小，固定 px 的字会小到看不清。用 --ui 把 UI 反向放大补偿。 */
+  const uiScale = clamp(1 / Math.max(0.62, scale), 1, 1.35);
+  stage.style.setProperty('--ui', uiScale.toFixed(3));
+  /* 首次 resize 发生在模块初始化阶段，那时 player/G 还在 TDZ（let 声明未执行）——
+     所以只在"启动完成"之后才做朝向同步。 */
+  if (booted) syncOrientation();
+}
+
+/* ==================== 手机适配 ==================== */
+/** 触摸设备判定：优先看指针类型（最准），UA 兜底（部分安卓浏览器不报 coarse） */
+const IS_TOUCH = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+  || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+const rotateEl = document.getElementById('rotate');
+let rotatePaused = false;
+let booted = false;
+
+/** 竖屏遮挡：手机竖屏时 16:9 舞台只剩一条窄横带，没法玩 —— 直接提示转屏并暂停 */
+function syncOrientation() {
+  const portrait = window.innerHeight > window.innerWidth;
+  const blocked = IS_TOUCH && portrait && window.innerWidth < 900;
+  document.body.classList.toggle('mobile', IS_TOUCH);
+  document.body.classList.toggle('portrait', blocked);
+  if (fsBtn) fsBtn.classList.toggle('hidden', !IS_TOUCH);   // 全屏按钮只给触摸设备
+  if (!rotateEl) return;
+  if (blocked) {
+    if (!rotateEl.classList.contains('show')) rotateEl.classList.add('show');
+    /* 只有"正在游玩"才由旋转接管暂停；本来就在菜单/暂停里就别抢状态 */
+    if (!G.over && !G.paused) { G.paused = true; rotatePaused = true; }
+  } else if (rotateEl.classList.contains('show')) {
+    rotateEl.classList.remove('show');
+    if (rotatePaused) { rotatePaused = false; G.paused = !!pausedManual; }
+  }
 }
 window.addEventListener('resize', resize);
 resize();
@@ -156,6 +189,33 @@ document.getElementById('fbCorner').onclick = () => {
   if (G && G.over) return;              // 结算时用面板里的那个入口（这个按钮会被遮罩挡住）
   if (panelMode === 'ship') return;     // 开局菜单里也有自己的入口
   showFeedback();
+};
+/* 画质手动选择（暂停面板里）：手机端帧率不够时框架会自动降级，
+   但玩家想主动选低画质换帧率（或反过来）时必须有入口 —— 自动降级只该兜底，不该替玩家决定。 */
+document.querySelectorAll('#pause .chip.q').forEach(el => {
+  el.onclick = () => {
+    setQuality(el.dataset.q, true);
+    syncQualityChips();
+  };
+});
+function syncQualityChips() {
+  document.querySelectorAll('#pause .chip.q').forEach(el => {
+    el.classList.toggle('on', el.dataset.q === qualityLevel);
+  });
+}
+
+/* 全屏按钮：只在触摸设备显示。手机浏览器地址栏会吃掉约 15% 的可视高度，
+   而且横屏时容易误触返回 —— 全屏对"能看清弹幕"是实打实的帮助。 */
+const fsBtn = document.getElementById('fsBtn');
+fsBtn.onclick = () => {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el).catch(() => { });
+  } else {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document).catch(() => { });
+  }
 };
 
 /** 当前装备终端里的三张卡（支持 1/2/3 快捷选择） */
@@ -318,6 +378,11 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
+/* 触摸摇杆参数（逻辑单位）：12 以内是死区，76 以上算满杆。
+   手机上的"推杆幅度"映射成速度 —— 键盘是数字量（走/不走），触摸是模拟量（慢慢挪/全速冲），
+   这对躲避弹幕很关键：贴边微调时全速冲会直接撞上去。 */
+const TOUCH_DEAD = 12, TOUCH_FULL = 76;
+
 canvas.addEventListener('touchstart', e => {
   e.preventDefault(); if (!player) return;
   audio.unlock();
@@ -326,6 +391,7 @@ canvas.addEventListener('touchstart', e => {
   player.touch.active = true; player.touch.id = t.identifier;
   player.touch.sx = p.x; player.touch.sy = p.y;
   player.touch.dx = 0; player.touch.dy = 0;
+  player.touch.len = 0; player.touch.mag = 0;
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   e.preventDefault(); if (!player || !player.touch.active) return;
@@ -339,15 +405,22 @@ canvas.addEventListener('touchmove', e => {
   const p = toLocal(t.clientX, t.clientY);
   const dx = p.x - player.touch.sx, dy = p.y - player.touch.sy;
   const len = Math.hypot(dx, dy);
-  if (len > 12) { player.touch.dx = dx / len; player.touch.dy = dy / len; }
-  else { player.touch.dx = 0; player.touch.dy = 0; }
+  if (len > TOUCH_DEAD) {
+    player.touch.dx = dx / len; player.touch.dy = dy / len;
+    /* 摇杆的可视长度按满杆封顶，避免手指拉太远时指示器跑出屏幕 */
+    player.touch.len = Math.min(len, TOUCH_FULL);
+    player.touch.mag = clamp((len - TOUCH_DEAD) / (TOUCH_FULL - TOUCH_DEAD), 0, 1);
+  } else { player.touch.dx = 0; player.touch.dy = 0; player.touch.len = 0; player.touch.mag = 0; }
 }, { passive: false });
 function endTouch(e) {
   e.preventDefault(); if (!player) return;
-  player.touch.active = false; player.touch.dx = 0; player.touch.dy = 0; player.touch.id = null;
+  player.touch.active = false; player.touch.dx = 0; player.touch.dy = 0;
+  player.touch.id = null; player.touch.len = 0; player.touch.mag = 0;
 }
 canvas.addEventListener('touchend', endTouch, { passive: false });
 canvas.addEventListener('touchcancel', endTouch, { passive: false });
+/* 安卓长按会弹上下文菜单 / 选中文字，战斗中很致命（手指停住不动就触发） */
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 /* 滚轮调整镜头高度：往下滚 = 拉高看得更远，往上滚 = 推近 */
 canvas.addEventListener('wheel', e => {
@@ -1453,8 +1526,11 @@ function update(dt) {
   if (keys.KeyD || keys.ArrowRight) mx++;
   if (keys.KeyW || keys.ArrowUp) my--;
   if (keys.KeyS || keys.ArrowDown) my++;
+  /* 触摸是模拟摇杆：推杆幅度决定速度（下限 0.35 避免"轻碰不动"的粘滞感） */
+  let speedScale = 1;
   if (player.touch.active && (player.touch.dx || player.touch.dy)) {
     mx = player.touch.dx; my = player.touch.dy;
+    speedScale = clamp(player.touch.mag || 0, 0.35, 1);
   }
   const m = Math.hypot(mx, my);
   const curSpeed = Math.hypot(player.vx, player.vy);
@@ -1462,7 +1538,7 @@ function update(dt) {
 
   // 反向输入（想往速度反方向走）= 刹车，减得更快
   const reversing = m > 0 && curSpeed > 1 && (player.vx * mx + player.vy * my) < 0;
-  const targetSpeed = m > 0 ? player.speed : 0;
+  const targetSpeed = m > 0 ? player.speed * speedScale : 0;
   const k = m > 0 ? (reversing ? ACCEL_BRAKE : ACCEL_UP) : ACCEL_DOWN;
   const nextSpeed = curSpeed + (targetSpeed - curSpeed) * Math.min(1, k * dt);
 
@@ -2253,6 +2329,53 @@ function loop(now) {
   updateHUD();
   if (flashA > 0) flashA *= Math.pow(0.85, dt * 60);   // 与帧率无关的衰减
   if (flashA < 0.01) flashA = 0;
+  autoQuality(dt);
+}
+
+/* ==================== 画质自动降级 ====================
+   手机 GPU 跑满屏 bloom 是常态瓶颈（桌面测 p50 9ms，中端手机可能是 3 倍）。
+   策略：连续 2 秒平均帧时间超过 24ms（约 42fps）就逐级降：bloom → backdrop → vignette。
+   只降不升（不来回抖），并且玩家在暂停面板里手动选过画质就不再自动干预 —— 
+   自动降级是为了"能玩"，不是为了替玩家做审美决定。 */
+const FX_KEY = 'starfall.fx.v1';
+let fxUserSet = false;
+let fqAcc = 0, fqN = 0;
+const QUALITY = { high: { bloom: true, backdrop: true, vignette: true }, mid: { bloom: false, backdrop: true, vignette: true }, low: { bloom: false, backdrop: false, vignette: false } };
+
+function applyQuality(level) {
+  const q = QUALITY[level] || QUALITY.high;
+  Object.assign(fx, q);
+}
+
+function loadQuality() {
+  try {
+    const v = localStorage.getItem(FX_KEY);
+    if (v && QUALITY[v]) { applyQuality(v); fxUserSet = true; return v; }
+  } catch { /* 隐私模式忽略 */ }
+  return 'high';
+}
+function setQuality(level, byUser) {
+  if (!QUALITY[level]) return;
+  applyQuality(level);
+  if (byUser) {
+    fxUserSet = true;
+    try { localStorage.setItem(FX_KEY, level); } catch { /* 隐私模式忽略 */ }
+  }
+  qualityLevel = level;
+  if (typeof syncQualityChips === 'function') syncQualityChips();
+}
+let qualityLevel = 'high';
+
+function autoQuality(dt) {
+  if (fxUserSet || G.over) return;
+  fqAcc += dt; fqN++;
+  if (fqAcc < 2) return;
+  const avg = fqAcc / Math.max(1, fqN);
+  fqAcc = 0; fqN = 0;
+  if (avg > 0.024) {
+    if (qualityLevel === 'high') { setQuality('mid', false); addText(player.x, player.y - 60, '帧率不足 · 已关闭辉光', '#ffb020', 16); }
+    else if (qualityLevel === 'mid') { setQuality('low', false); addText(player.x, player.y - 60, '帧率不足 · 已切到最低画质', '#ffb020', 16); }
+  }
 }
 
 /* ==================== 调试 / 平衡工具（不影响正常游玩） ==================== */
@@ -2370,6 +2493,9 @@ function sim(seconds, opts) {
 
 reset();
 requestAnimationFrame(loop);
+loadQuality();
+booted = true;
+syncOrientation();
 /* 首次进入（或刷新后）先选机体：直接把玩家丢进战场会让新玩家不知道自己在开什么 */
 showShipSelect(true);
 
@@ -2416,4 +2542,8 @@ window.__game = {
   showShipSelect,
   /** 画面特效开关（bloom / backdrop / vignette），控制台里可实时改 */
   fx,
+  /** 画质档位（high/mid/low）：手机端会自动降级，玩家手动选过就不再自动干预 */
+  get quality() { return qualityLevel; },
+  setQuality(lv) { setQuality(lv, true); return qualityLevel; },
+  get isTouch() { return IS_TOUCH; },
 };

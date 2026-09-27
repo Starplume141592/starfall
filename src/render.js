@@ -859,6 +859,28 @@ export function render(ctx, S) {
   /* 屏幕空间：小地图 */
   drawMinimap(ctx, S, cx, cy, vw, vh);
 
+  /* 屏幕空间：触摸摇杆指示器（只在触摸时出现）。
+     它在"手指按下的位置"画，而不是固定在角落 —— 手机玩家的手指本来就在那里，
+     视线不用离开战场中央。外圈=死区边界，内圈=当前推杆量。 */
+  const tt = player.touch;
+  if (tt && tt.active && tt.len > 0) {
+    const R = 76, k = clamp(tt.len / R, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.30;
+    ctx.strokeStyle = '#8fd0ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(tt.sx, tt.sy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(tt.sx, tt.sy, 12, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#8fd0ff';
+    ctx.beginPath();
+    ctx.arc(tt.sx + tt.dx * tt.len, tt.sy + tt.dy * tt.len, 14 * (0.6 + 0.4 * k), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   /* 屏幕空间：辉光 + 暗角 */
   compose(ctx, tr, gw, gh, ctx.canvas.width, ctx.canvas.height);
   if (fx.vignette) drawVignette(ctx, W, H);
