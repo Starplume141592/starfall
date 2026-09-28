@@ -11,6 +11,8 @@
 ```bash
 npm run dev          # 起一个极简静态服务器
 # 打开 http://localhost:5173/
+
+npm run check        # 全套自检（武器数值 + 调色板），退出码非零即失败
 ```
 
 必须走 HTTP 服务器：ES module 在 `file://` 下会被浏览器 CORS 拦掉，双击 `index.html` 打不开。
@@ -38,6 +40,7 @@ npm run dev          # 起一个极简静态服务器
 
 ## 资料库
 
+- [`AI 操作手册.md`](AI%20操作手册.md) —— **给 AI 的工作规程**（开工读什么、改代码前先出影响面分析、改完跑自检）；`STATUS.md`（现在在做什么）、`DECISIONS.md`（为什么这样定）
 - [`reference/图鉴.md`](reference/图鉴.md) —— **完整图鉴**：世界与镜头、机体、武器（含 1–7 级全数值表）、属性卡、模组、敌人与 Boss（含状态机与阶段）、敌方攻击方式、成长与经济、波次与难度曲线、操作与双端适配、界面与可读性约定、工程契约、调试钩子
 
 ## 工程说明
@@ -48,15 +51,16 @@ npm run dev          # 起一个极简静态服务器
 - `reference/改造设计.md`、`reference/demo-spec.md` —— 立项时的改造方案与 Demo 规格
 - `docs/canvas2d-bloom-report.md` —— Canvas 2D 辉光/后处理的技术调研（含实测数据表）
 - `research/` —— 打击感、粒子预算、无障碍、击退数值等调研底稿
-- `bench/palette-check.mjs` —— 调色板校验（明度分带 + 三型色盲模拟 + 跨带断言）：`node bench/palette-check.mjs`
+- `bench/palette-check.mjs` —— 调色板校验（明度分带 + 三型色盲模拟 + 跨带断言，**基线回归门禁**）：`npm run check:palette`
 - `bench/bloom-bench.html` —— 辉光开销基准页，浏览器直接打开
+- `bench/palette-baseline.json` —— 上游门禁的已知失败基线（**有意改配色后才重记**：`node bench/palette-check.mjs --update-baseline`）
 
 ### 设计上的几条硬约束
 
 1. `config.js` 不 import 任何模块，保持纯数据 + 纯函数
 2. `render.js` 只读状态，绝不改状态
 3. 碰撞一律走空间网格，禁止全量扫描敌人数组
-4. 粒子/飘字必须有上限，实体删除用 `swapRemove`
+4. 粒子/飘字/弹体必须有上限，实体删除用 `swapRemove`
 5. 刷怪点必须落在视口外（垂直方向那条边不能 clamp 进世界）
 6. 任何"一屏多大"的地方都必须走 `viewW()` / `viewH()`（镜头高度可调之后，裸用 `W`/`H` 会算错）
 7. 改 `WORLD` 尺寸或武器射程，必须重跑对应的验证（见架构文档的验证记录表）

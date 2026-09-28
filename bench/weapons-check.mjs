@@ -34,6 +34,11 @@ const cmp = (id, label, nv, ov, tol) => {
   if (nv === undefined || ov === undefined) { console.log(`  - ${id.padEnd(10)} ${label.padEnd(14)} （旧表无此项，跳过）`); return; }
   row(id, label, nv, ov, Math.abs(nv - ov) < tol);
 };
+/* 摘要放第一行，明细在后 —— 用户只看第一行有没有 ✓ / ✗（见 AI 操作手册）。
+   所以先把明细缓冲起来，最后统一输出。 */
+const buf = [];
+console.log = (...a) => buf.push(a.map(String).join(' '));
+
 console.log('=== 对齐检查：新 7 级满级 vs 旧 5 级满级 ===');
 for (const id of Object.keys(WEAPONS)) {
   const w = WEAPONS[id], o = OLD[id];
@@ -66,5 +71,10 @@ const statPicks = cfg.STATS.reduce((a, s) => a + s.maxLevel, 0), modulePicks = c
 console.log(`  池子总量：武器 ${total} + 属性 ${statPicks} + 模组 ${modulePicks} = ${total + statPicks + modulePicks} 次`);
 console.log(`  一局约能拿到 62 次选择（改后实测终局等级）→ 想全练满是做不到的，必须挑`);
 
-console.log('\n' + (fails === 0 ? '全部通过 ✓' : `共 ${fails} 处未通过`));
+/* 摘要行 + 明细一起输出 */
+const nW = Object.keys(WEAPONS).length;
+process.stdout.write(fails === 0
+  ? `✓ weapons-check：${nW} 把武器全部通过（7 级单调性 + 与旧 5 级满级对齐）\n`
+  : `✗ weapons-check：${fails} 处未通过\n`);
+process.stdout.write(buf.join('\n') + '\n');
 process.exit(fails === 0 ? 0 : 1);

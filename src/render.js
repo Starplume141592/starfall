@@ -493,6 +493,58 @@ export function render(ctx, S) {
     }
   }
 
+  /* 事件：据点信标的充能圈（0.6.0 阶段 0）。
+     语义是"你的目标区域"，不是威胁 —— 所以走 B2 玩家/光环层（allyBeam 青），
+     绝不能用 B3 危险带的暖色，否则玩家会把它读成"别站进去"。
+     圈内 = 实线 + 淡填充；圈外 = 虚线（"还没到位"）。 */
+  const ev = G.eventRun;
+  if (ev && ev.zone && cull(ev.zone.x, ev.zone.y, ev.zone.r + 60)) {
+    const z = ev.zone;
+    const k = clamp(ev.charge / ev.def.time, 0, 1);
+    const inside = Math.hypot(player.x - z.x, player.y - z.y) <= z.r;
+    ctx.save();
+    ctx.globalAlpha = 0.10 + 0.10 * k;
+    ctx.fillStyle = PALETTE.allyBeam;
+    ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = inside ? 0.95 : 0.55;
+    ctx.strokeStyle = PALETTE.allyBeam;
+    ctx.lineWidth = 3;
+    ctx.setLineDash(inside ? [] : [10, 9]);
+    ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.stroke();
+    /* 充能进度：沿圈画一段弧，读起来是"还差多少"而不是一个数字 */
+    ctx.setLineDash([]);
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(z.x, z.y, z.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k);
+    ctx.stroke();
+    ctx.restore();
+    drawGlow(ctx, z.x, z.y, PALETTE.allyBeam, 30 + 14 * k, inside ? 0.7 : 0.35);
+  }
+
+  /* 猎杀事件的目标标记：一个地环 + 四角括号（"这是任务目标"，不是"这是 Boss"）。
+     走危险带颜色是**对的**——目标是敌方单位，语义本来就是"能杀你的东西"。 */
+  if (ev && ev.def.id === 'hunt' && ev.targetId) {
+    const tgt = G.enemies.find(e => e.id === ev.targetId && !e.dead);
+    if (tgt && cull(tgt.x, tgt.y, 160)) {
+      const pulse = 1 + Math.sin(G.t * 5) * 0.06;
+      const rr = (tgt.r + 26) * pulse;
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = PALETTE.enemyBullet;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(tgt.x, tgt.y, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 4; i++) {
+        const a0 = Math.PI / 4 + i * Math.PI / 2, a1 = a0 + Math.PI / 4;
+        ctx.beginPath();
+        ctx.arc(tgt.x, tgt.y, rr + 8, a0, a1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   /* 掉落物：纳米修复包 / 引力场发生器 / 战术弹 */
   for (const p of G.pickups) {
     if (!cull(p.x, p.y, 48)) continue;

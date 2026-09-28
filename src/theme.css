@@ -117,6 +117,9 @@ canvas {
   transition: color 0.2s;
 }
 #clock span.warn { color: #FFB020; text-shadow: 0 0 12px rgba(255, 176, 32, 0.6), 0 1px 8px rgba(0, 0, 0, 0.9); }
+/* 事件目标进度：只在事件进行中出现（无事件时 .hidden 收起，不留空行）。
+   字号/颜色**直接沿用上面的 `#clock span`**（它的特异性更高，覆盖得到）——这里只补"收起"。 */
+#clockEvent.hidden { display: none; }
 
 #topbar {
   position: relative;

@@ -3,7 +3,7 @@
 import {
   WEAPONS, STATS, MODULES, weaponRange, bulletLife, ENEMY_TYPES, enemyDamage, SPLITTER_CHILD, BOSS_TYPES, BOSS_PHASE, BLINK, ZONE, LASER, ELITE, SHOOTER_BULLET, SHIPS,
   ENEMY_SPEED_SCALE,
-  WAVE_LEN, MAX_ENEMY, MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE, SPAWN, ENEMY_ABILITY, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
+  WAVE_LEN, MAX_ENEMY, MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE, MAX_ALLY_BULLET, RUN, EVENTS, SPAWN, ENEMY_ABILITY, PLAYER_SPEED, ACCEL_UP, ACCEL_DOWN, PLAYER, VIEW, WORLD, VIEW_ZOOM,
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
@@ -190,6 +190,7 @@ const elCredit = document.getElementById('sCredit');
 const elShopBtn = document.getElementById('shopBtn');
 const elShopCredits = document.getElementById('shopCredits');
 const elNext = document.getElementById('clockNext');      // 顶部正中：下一波倒计时
+const elEvent = document.getElementById('clockEvent');    // 顶部正中：事件目标进度（无事件时隐藏）
 const elZoom = document.getElementById('sZoom');
 const loadoutEl = document.getElementById('loadout');
 let loadoutKey = '';
@@ -209,7 +210,7 @@ document.getElementById('fbCorner').onclick = () => {
 document.getElementById('shopBtn').onclick = () => {
   if (G && G.over) return;
   if (panelMode === 'shop') closeShop();
-  else if (!currentOptions) { shopOpen = true; showShop(); }
+  else if (!currentOptions) { shopOpen = true; showShop('big'); }
 };
 document.getElementById('pauseBtn').onclick = () => {
   if (G && G.over) return;
@@ -322,11 +323,20 @@ function reset() {
     cam: { x: 0, y: 0 },          // 镜头左上角（世界坐标）
     enemies: [], bullets: [], beams: [], enemyBullets: [], pickups: [],
     orbs: [], texts: [], parts: [], bolts: [], rings: [], zones: [],
-    paused: false, over: false, combo: 0, comboTimer: 0, comboBest: 0
+    paused: false, over: false, combo: 0, comboTimer: 0, comboBest: 0,
+    /* 友方弹体上限的可观测项：峰值 + 被上限丢掉的发数（见 MAX_ALLY_BULLET 注释）。
+       上限静默咬住 = 隐性 DPS 削减，所以必须能被看见 —— 这两个数只在这里和 fireAllyBullet 里动。 */
+    allyBulletPeak: 0, allyBulletDropped: 0,
+    /* 局内进程结构（0.6.0 阶段 0）：phase 是唯一权威的"现在处于哪一段"。
+       wave 的推进只在 phase==='beat' 与 'event' 期间发生（面板开着时游戏本来就暂停）。 */
+    phase: 'beat', stage: 1,
+    beatsLeft: RUN.beatsPerStage, beatWavesLeft: RUN.wavePerBeat,
+    eventRun: null, eventLog: []
   };
   pendingLevels = 0; shake = 0; hitStop = 0; flashA = 0;
   currentOptions = null;
   panelMode = null;                 // 重开一局作废所有面板状态（不然守卫会拦住后续入口）
+  shopOpen = false; pendingShop = null; shopStock = [];
   loadoutKey = '!';
   pausedManual = false;
   pauseEl.classList.add('hidden');
@@ -377,7 +387,7 @@ window.addEventListener('keydown', e => {
     /* 升级面板待选择时不开商店：否则会把那一级的选择面板盖掉（pendingLevels 还在，
        但玩家会以为"我的升级没了"）。 */
     if (G.over || panel._shipPick || currentOptions) return;
-    if (shopOpen) closeShop(); else { shopOpen = true; showShop(); }
+    if (shopOpen) closeShop(); else { shopOpen = true; showShop('big'); }
     return;
   }
   if (e.code === 'Minus' || e.code === 'NumpadSubtract') { nudgeZoom(-1); return; }   // 镜头拉高（看得更远）
@@ -554,6 +564,18 @@ function fireBullet(x, y, angle, spd, r, dmg, life, src) {
   });
 }
 
+/** 友方弹体的**唯一构造入口**（与敌方 `fireBullet` 对称）。
+ *  追踪弹族 / 近防霰弹 / 回旋切割器 三处曾经各自 `G.bullets.push` —— 和敌方弹幕当年是同一个坑：
+ *  要加上限就得记得改三处，漏一处等于没加。上限从此只在这里判一次。
+ *  返回 false 表示这一发被上限丢掉（调用方无需处理，但 `dropped` 会计数）。 */
+function fireAllyBullet(b) {
+  if (G.bullets.length >= MAX_ALLY_BULLET) { G.allyBulletDropped++; return false; }
+  G.bullets.push(b);
+  /* 长度只在 push 时增长，所以这里取到的就是峰值 —— 不必每帧扫一遍容器 */
+  if (G.bullets.length > G.allyBulletPeak) G.allyBulletPeak = G.bullets.length;
+  return true;
+}
+
 /** 精英化：血厚、体型大、经验多、伤害高 */
 function makeElite(e, w) {
   e.elite = true;
@@ -610,8 +632,11 @@ function spawnEnemy(forceElite) {
 }
 
 /* ==================== 劫级装甲核心（Boss） ==================== */
-function spawnBoss() {
+function spawnBoss(hpWaveAhead) {
   const w = G.wave;
+  /* 事件目标（猎杀）可以按"当前波次 + N"取血量：打当前波的 Boss 太软
+     —— 实测 5.2 秒就死，事件形同虚设。只抬血量，不抬伤害（考的是"打得动吗"，不是"扛得住吗"） */
+  const hw = w + (hpWaveAhead || 0);
   const m = 70 / Math.min(1, zoom);
   const L = G.cam.x - m, R = G.cam.x + viewW() + m, T = G.cam.y - m, B = G.cam.y + viewH() + m;
   const side = Math.floor(Math.random() * 4);
@@ -624,7 +649,7 @@ function spawnBoss() {
     : (w % 20 === 0) ? BOSS_TYPES.juggernaut
       : (w % 15 === 0) ? BOSS_TYPES.spinner
         : (w % 10 === 0) ? BOSS_TYPES.summoner : BOSS_TYPES.charger;
-  const hp = def.hp(w);
+  const hp = def.hp(hw);
   const boss = {
     id: ++uid, x, y, r: def.r, hp, maxHp: hp, speed: def.spd * ENEMY_SPEED_SCALE(w), dmg: def.dmg(w),
     color: def.color, exp: def.exp, type: 'boss', variant: def.variant, bossName: def.name,
@@ -968,9 +993,12 @@ function showUpgrade() {
   const opts = jump ? buildModuleOptions() : buildOptions();
   if (!opts.length) {                       // 池子抽干（全武器满级且属性全满）：不空转面板
     overlay.classList.remove('show');
-    syncPauseState();
-    /* 退回这次升级，避免"升了级却一个都没选到"。若同时到账了多级，递归消化（每轮递减，必然收敛）。 */
-    if (pendingLevels > 0) { pendingLevels--; if (pendingLevels > 0) showUpgrade(); }
+    /* 退回这次升级，避免"升了级却一个都没选到"。若同时到账了多级，递归消化（每轮递减，必然收敛）。
+       ⚠️ 递减到 0 之后**必须**把排队的商店放出来 —— 否则 phase 停在商店态却没人开店，
+       updateRun 会一直空转（实测：一局卡在 25 分钟不动）。 */
+    pendingLevels = Math.max(0, pendingLevels - 1);
+    if (pendingLevels > 0) showUpgrade();
+    else if (!flushPendingPanel()) syncPauseState();
     return;
   }
   currentOptions = opts;
@@ -1006,7 +1034,11 @@ function chooseOption(o) {
      所以宁可在源头夹住。 */
   pendingLevels = Math.max(0, pendingLevels - 1);
   if (pendingLevels > 0) showUpgrade();
-  else { overlay.classList.remove('show'); currentOptions = null; syncPauseState(); }
+  else {
+    overlay.classList.remove('show'); currentOptions = null;
+    /* 升级弹完了才轮到排队的商店（见 openShop 的"升级面板优先"） */
+    if (!flushPendingPanel()) syncPauseState();
+  }
 }
 
 function gameOver() {
@@ -1137,14 +1169,46 @@ let shopOpen = false;
 /** 当前打开的是哪个非升级面板（ESC 需要据此决定"关面板"还是"暂停"） */
 let panelMode = null;
 
-/** 商店面板：B 键开关（暂停游戏）。任何时候都能开 —— 但钱只来自精英/首领。 */
-function showShop() {
+/** 本帧货架（小铺是随机子集、大铺是全量）。进店时定，重绘时沿用同一份。 */
+let shopStock = [];
+
+/** 结算面板该在什么时候弹：商店/事件结束之后才轮得到。 */
+let pendingShop = null;
+
+/** 进程里安排一次进店。**升级面板优先** —— 如果此刻有升级待选，
+    先让升级弹完再开店，否则商店会盖住它（历史上"数据注入"就踩过这个坑）。 */
+function openShop(kind) {
+  G.phase = kind === 'big' ? 'bigShop' : 'smallShop';
+  if (pendingLevels > 0 || currentOptions) { pendingShop = kind; return; }
+  showShop(kind);
+}
+
+/** 升级面板关掉之后调用：把排队中的商店放出来 */
+function flushPendingPanel() {
+  if (pendingShop) {
+    const kind = pendingShop;
+    pendingShop = null;
+    showShop(kind);
+    return true;
+  }
+  return false;
+}
+
+/** 商店面板：小铺每小节之间自动弹、大铺每个事件之后自动弹；B 键也随时能手动开（走大铺货架）。
+ *  信用点只来自精英/首领 + 事件奖励。 */
+function showShop(kind) {
+  const isBig = kind === 'big';
   G.paused = true;
   currentOptions = null;
   panel._shipPick = null;
   panelMode = 'shop';
+  shopOpen = true;
   pauseEl.classList.add('hidden');     // 同上：别让暂停层压住遮罩
-  const rows = SHOP_ITEMS.map(it => {
+  /* 货架：小铺从现有 6 件里随机抽 RUN.smallShopItems 件（"这次进店有什么"本身是信息），
+     大铺全上。分类商品池是阶段 1 的事 —— 阶段 0 先证明"两种规格的节奏"成立。 */
+  const n = isBig ? RUN.bigShopItems : RUN.smallShopItems;
+  shopStock = SHOP_ITEMS.slice().sort(() => Math.random() - 0.5).slice(0, n);
+  const rows = shopStock.map(it => {
     const price = shopPrice(it);
     const owned = it.once && player.shopBought[it.id];
     const afford = player.credits >= price && !owned;
@@ -1155,18 +1219,22 @@ function showShop() {
       <div class="ds">${it.desc}</div>
     </div>`;
   }).join('');
-  panel.innerHTML = `<h2>补给终端 // 信用点 ${Math.round(player.credits)}</h2>
-    <p class="sub">信用点来自击毁精英与首领 · 每买一次全场涨价 ${Math.round(SHOP_INFLATE * 100)}% · 按 B 或 ESC 关闭</p>
+  const title = isBig ? '补给终端 · 整备' : '补给终端 · 前哨';
+  const sub = isBig
+    ? `事件结算后的整备机会 · 每买一次全场涨价 ${Math.round(SHOP_INFLATE * 100)}%`
+    : `小节之间的前哨 · 只有 ${RUN.smallShopItems} 件现货 · 每买一次全场涨价 ${Math.round(SHOP_INFLATE * 100)}%`;
+  panel.innerHTML = `<h2>${title} // 信用点 ${Math.round(player.credits)}</h2>
+    <p class="sub">${sub} · 按 B 或 ESC 关闭</p>
     <div id="cards">${rows}</div>
     <button class="btn alt" id="shopClose">返回战场</button>`;
   overlay.classList.add('show');
   panel.querySelectorAll('.card').forEach(el => {
     el.onclick = () => {
-      const it = SHOP_ITEMS.find(x => x.id === el.dataset.item);
+      const it = shopStock.find(x => x.id === el.dataset.item);
       if (it) buyItem(it);
       /* 只有商店还开着才重绘。'数据注入' 会主动关店去弹升级面板 ——
          无条件重绘会把它刚弹出的面板覆盖掉（实测：升级了但面板是商店，玩家以为升级丢了）。 */
-      if (shopOpen) showShop();
+      if (shopOpen) showShop(kind);
     };
   });
   /* 必须有关闭按钮：面板开着时遮罩会挡住右下角按钮，而手机上没有 ESC / B ——
@@ -1180,6 +1248,17 @@ function closeShop() {
   shopOpen = false;
   panelMode = null;
   currentOptions = null;
+  /* 关店 = 推进进程。这是"商店是进程的一部分"的落点：
+     小铺 → 继续本段；大铺 → 进下一段；大铺且已是最后一段 → 结算（通关）。 */
+  if (G.phase === 'bigShop') {
+    if (G.stage >= RUN.stages) { syncPauseState(); gameOver(); return; }
+    G.stage++;
+    G.beatsLeft = RUN.beatsPerStage;
+    G.beatWavesLeft = RUN.wavePerBeat;
+    G.phase = 'beat';
+  } else if (G.phase === 'smallShop') {
+    G.phase = 'beat';
+  }
   syncPauseState();
   if (pausedManual) pauseEl.classList.remove('hidden');
 }
@@ -1399,7 +1478,7 @@ function updateWeapons(dt) {
           for (let i = 0; i < numShots; i++) {
             const t = tgts[i % tgts.length];
             const a = Math.atan2(t.y - player.y, t.x - player.x) + rand(-def.spread, def.spread);
-            G.bullets.push({
+            fireAllyBullet({
               type: 'dart', x: player.x, y: player.y,
               vx: Math.cos(a) * def.bulletSpeed, vy: Math.sin(a) * def.bulletSpeed,
               r: def.bulletR, dmg, pierce: def.pierce ? def.pierce(w.lv) : 0, hit: new Set(),
@@ -1453,7 +1532,7 @@ function updateWeapons(dt) {
           for (let i = 0; i < pellets; i++) {
             const off = (i / Math.max(1, pellets - 1) - 0.5) * def.spread + rand(-0.05, 0.05);
             const a = baseA + off;
-            G.bullets.push({
+            fireAllyBullet({
               type: 'dart', x: player.x, y: player.y,
               vx: Math.cos(a) * def.bulletSpeed, vy: Math.sin(a) * def.bulletSpeed,
               r: def.bulletR, dmg, pierce: 0, hit: new Set(),
@@ -1551,7 +1630,7 @@ function updateWeapons(dt) {
         if (tgts.length) {
           w.t = def.cd(w.lv) * player.cdMul;
           for (const t of tgts) {
-            G.bullets.push({
+            fireAllyBullet({
               type: 'boomerang',
               x: player.x, y: player.y,
               startX: player.x, startY: player.y,
@@ -1622,6 +1701,168 @@ function forEachNearBox(x0, y0, x1, y1, fn) {
     }
   }
 }
+
+/* ==================== 局内进程：段 / 小节 / 事件（0.6.0 阶段 0） ====================
+   结构：一局 = RUN.stages 段；一段 = RUN.beatsPerStage 个战斗小节 + 1 个事件；
+        每个战斗小节 = RUN.wavePerBeat 个内部波次（3 × 20s = 60 秒）。
+   ⚠️ wave 的推进逻辑与语义**完全没动**（见 config: RUN 的注释）——
+      这段代码只是把原来的裸波次循环包了一层"小节计数"，并在小节末切换到商店/事件。 */
+
+/** 战斗小节：原 update() 里的波次块，逐字搬过来，末尾加小节推进 */
+function updateRun(dt) {
+  const cx = G.cam.x + viewW() / 2, cy = G.cam.y + viewH() / 2;
+
+  if (G.phase === 'event') { updateEvent(dt, cx, cy); return; }
+  /* 商店态：进程停住。**自愈**：如果该开店却没开（面板被别的流程顶掉了 / 升级面板排到了后面），
+     在这里补开一次 —— 否则 phase 永远停在商店态，一局直接卡死（实测过：25 分钟原地空转）。 */
+  if (G.phase === 'smallShop' || G.phase === 'bigShop') {
+    if (!shopOpen) showShop(G.phase === 'bigShop' ? 'big' : 'small');
+    return;
+  }
+
+  G.waveTimer += dt;
+
+  /* 事件预告：下一波是陨级/精英时，提前 3 秒警告（可预期的压力 = 掌控感） */
+  if (!G.eventWarned && WAVE_LEN - G.waveTimer <= 3) {
+    const nextWave = G.wave + 1;
+    if (nextWave % 5 === 0) {
+      G.eventWarned = true;
+      addText(cx, cy - 150, '⚠ 陨级单位 3 秒后抵达', '#f06595', 22);
+      audio.bossWarn();
+      flash(.18, '240,101,149');
+    } else if (nextWave % SPAWN.eliteWaveEvery === 0) {
+      G.eventWarned = true;
+      addText(cx, cy - 150, '⚠ 精英波 3 秒后抵达', PALETTE.elite, 20);
+      audio.levelUp();
+    }
+  }
+
+  if (G.waveTimer >= WAVE_LEN) {
+    G.waveTimer -= WAVE_LEN;
+    G.wave++;
+    G.bossSpawned = false;
+    G.eliteWaveSpawned = false;
+    G.eventWarned = false;
+    addText(cx, cy - 100, `第 ${G.wave} 波`, '#58a6ff', 26);
+    if (G.wave % SPAWN.eliteWaveEvery === 0) addText(cx, cy - 62, '精英波', PALETTE.elite, 20);
+
+    /* ---- 小节推进：走满 wavePerBeat 个波就是一个小节 ---- */
+    if (--G.beatWavesLeft <= 0) {
+      G.beatWavesLeft = RUN.wavePerBeat;
+      G.beatsLeft--;
+      if (G.beatsLeft <= 0) { startEvent(cx, cy); return; }
+      openShop('small');
+      return;
+    }
+  }
+  if (G.wave % 5 === 0 && !G.bossSpawned) {
+    G.bossSpawned = true;
+    spawnBoss();
+  } else if (G.wave % SPAWN.eliteWaveEvery === 0 && !G.eliteWaveSpawned) {
+    G.eliteWaveSpawned = true;
+    /* 质变：精英波规模随波次增长（每 12 波 +1 只）——
+       后期真正咬人的是精英的环形弹幕（走保留额度），而不是小怪弹量 */
+    const n = SPAWN.eliteWaveCount + Math.floor(Math.max(0, G.wave - 12) / 12);
+    for (let i = 0; i < n; i++) spawnEnemy(true);
+  }
+  spawnAtRate(dt, 1);
+}
+
+/** 按当前波次的速率刷怪（事件会传倍率）。原来内联在波次块里，现在两处共用。 */
+function spawnAtRate(dt, mul) {
+  const rate = SPAWN.rate(G.wave) * SPAWN.ramp(G.t) * mul;
+  G.spawnAcc += dt * rate;
+  let guard = 0;
+  while (G.spawnAcc >= 1 && guard++ < SPAWN.guard) {
+    G.spawnAcc -= 1;
+    spawnEnemy();
+  }
+  if (G.spawnAcc > 4) G.spawnAcc = 4;     // 防止长时间暂停后一次性喷一堆
+}
+
+/** 事件开场：**复用现有敌人与 Boss**，不新增任何敌人类别（阶段 0 的硬约束） */
+function startEvent(cx, cy, forceId) {
+  const def = (forceId && EVENTS.find(e => e.id === forceId)) || EVENTS[Math.floor(Math.random() * EVENTS.length)];
+  const run = { def, t: 0, charge: 0, targetId: 0, zone: null };
+  G.eventRun = run;
+  G.phase = 'event';
+  G.eventWarned = false;
+  G.spawnAcc = 0;                          // 事件从干净的一拍开始，别把上一小节的余量喷出来
+
+  addText(cx, cy - 168, `◆ 事件 · ${def.name}`, '#8FB0CF', 26);
+  addText(cx, cy - 130, def.brief, '#8FB0CF', 16);
+  audio.bossWarn();
+  flash(.2, '143,176,207');
+
+  if (def.id === 'hunt') {
+    spawnBoss(def.hpWaveAhead || 0);
+    const b = G.enemies[G.enemies.length - 1];
+    if (b && b.boss) { run.targetId = b.id; b.evMark = true; }
+  } else if (def.id === 'hold') {
+    /* 信标投放在离玩家一段距离处：逼你移动过去 —— 否则"站在原地等一下"不是决策。
+       位置必须夹进世界内，否则会出现"圈在地图外、永远充不满"的死局。 */
+    const a = Math.random() * Math.PI * 2;
+    run.zone = {
+      x: clamp(player.x + Math.cos(a) * def.offset, 120, WORLD.w - 120),
+      y: clamp(player.y + Math.sin(a) * def.offset, 120, WORLD.h - 120),
+      r: def.radius
+    };
+    addText(run.zone.x, run.zone.y - def.radius - 30, '▼ 信标', PALETTE.allyBeam, 20);
+  }
+}
+
+/** 事件进行中：照常刷怪（否则事件里没有压力），并按事件类型判定成败 */
+function updateEvent(dt, cx, cy) {
+  const run = G.eventRun;
+  if (!run) { G.phase = 'beat'; return; }        // 防御：状态丢了就退回战斗，别把一局卡死
+  const def = run.def;
+  run.t += dt;
+  spawnAtRate(dt, def.rateMul || 1);
+
+  if (def.id === 'hunt') {
+    const tgt = G.enemies.find(e => e.id === run.targetId && !e.dead);
+    if (!tgt) { endEvent(true, cx, cy); return; }              // 目标没了 = 打死了
+    if (run.t >= def.time) {                                    // 超时 = 目标脱离
+      const i = G.enemies.indexOf(tgt);
+      if (i >= 0) swapRemove(G.enemies, i);
+      addText(tgt.x, tgt.y - 40, '目标脱离', PALETTE.enemyBullet, 20);
+      endEvent(false, cx, cy);
+    }
+    return;
+  }
+
+  if (def.id === 'hold') {
+    const z = run.zone;
+    if (Math.hypot(player.x - z.x, player.y - z.y) <= z.r) run.charge += dt;
+    if (run.charge >= def.time) { endEvent(true, cx, cy); return; }
+    if (run.t >= def.time * def.grace) { endEvent(false, cx, cy); return; }
+    return;
+  }
+
+  /* surge：只要还活着就是成功（压力本身就是内容） */
+  if (run.t >= def.time) endEvent(true, cx, cy);
+}
+
+function endEvent(success, cx, cy) {
+  const run = G.eventRun;
+  G.eventRun = null;
+  const def = run ? run.def : { name: '事件' };
+  /* 奖励：占位数值 —— A7 的"奖励档位"是阶段 4 的事，
+     阶段 0 只要证明成功和失败拿到的东西**确实不一样**。 */
+  const gain = success ? RUN.reward.win : RUN.reward.lose;
+  player.credits += gain;
+  /* used = 事件实际花了多久（调"事件难度"就看它：猎杀看几秒打死、据点看充能花了多少，
+     全部贴着时限完成 = 事件太软，A7 的奖励档位就没有牙齿） */
+  G.eventLog.push({ id: def.id, name: def.name, success, t: Math.round(G.t), used: run ? +run.t.toFixed(1) : 0, gain });
+
+  addText(cx, cy - 168, success ? `◆ ${def.name} · 成功` : `✕ ${def.name} · 失败`,
+    success ? PALETTE.elite : PALETTE.enemyBullet, 26);
+  addText(cx, cy - 130, `奖励 +${gain} 信用点`, '#FFD166', 18);
+  if (success) audio.levelUp(); else audio.hurt();
+
+  openShop('big');
+}
+
 
 /* ==================== 每帧更新 ==================== */
 /** 把「每帧阻尼」换算成与帧率无关的形式（Demo 的系数都是 60fps 口径） */
@@ -1769,52 +2010,8 @@ function update(dt) {
 
   updateWeapons(dt);
 
-  /* 波次 */
-  G.waveTimer += dt;
-  const cx = G.cam.x + viewW() / 2, cy = G.cam.y + viewH() / 2;
-
-  /* 事件预告：下一波是陨级/精英时，提前 3 秒警告（可预期的压力 = 掌控感） */
-  if (!G.eventWarned && WAVE_LEN - G.waveTimer <= 3) {
-    const nextWave = G.wave + 1;
-    if (nextWave % 5 === 0) {
-      G.eventWarned = true;
-      addText(cx, cy - 150, '⚠ 陨级单位 3 秒后抵达', '#f06595', 22);
-      audio.bossWarn();
-      flash(.18, '240,101,149');
-    } else if (nextWave % SPAWN.eliteWaveEvery === 0) {
-      G.eventWarned = true;
-      addText(cx, cy - 150, '⚠ 精英波 3 秒后抵达', PALETTE.elite, 20);
-      audio.levelUp();
-    }
-  }
-
-  if (G.waveTimer >= WAVE_LEN) {
-    G.waveTimer -= WAVE_LEN;
-    G.wave++;
-    G.bossSpawned = false;
-    G.eliteWaveSpawned = false;
-    G.eventWarned = false;
-    addText(cx, cy - 100, `第 ${G.wave} 波`, '#58a6ff', 26);
-    if (G.wave % SPAWN.eliteWaveEvery === 0) addText(cx, cy - 62, '精英波', PALETTE.elite, 20);
-  }
-  if (G.wave % 5 === 0 && !G.bossSpawned) {
-    G.bossSpawned = true;
-    spawnBoss();
-  } else if (G.wave % SPAWN.eliteWaveEvery === 0 && !G.eliteWaveSpawned) {
-    G.eliteWaveSpawned = true;
-    /* 质变：精英波规模随波次增长（每 12 波 +1 只）——
-       后期真正咬人的是精英的环形弹幕（走保留额度），而不是小怪弹量 */
-    const n = SPAWN.eliteWaveCount + Math.floor(Math.max(0, G.wave - 12) / 12);
-    for (let i = 0; i < n; i++) spawnEnemy(true);
-  }
-  const rate = SPAWN.rate(G.wave) * SPAWN.ramp(G.t);
-  G.spawnAcc += dt * rate;
-  let guard = 0;
-  while (G.spawnAcc >= 1 && guard++ < SPAWN.guard) {
-    G.spawnAcc -= 1;
-    spawnEnemy();
-  }
-  if (G.spawnAcc > 4) G.spawnAcc = 4;     // 防止长时间暂停后一次性喷一堆
+  /* 局内进程：战斗小节 / 事件（把原来的裸波次逻辑收进 updateRun） */
+  updateRun(dt);
 
   /* 弹体 */
   for (let i = G.bullets.length - 1; i >= 0; i--) {
@@ -2432,13 +2629,37 @@ function updateHUD() {
     if (elShopBtn._ready !== ready) { elShopBtn._ready = ready; elShopBtn.classList.toggle('ready', ready); }
   }
 
-  /* 波次预告：让压力可预期（"随机的困难让玩家焦虑，可预期的困难让玩家投入"） */
-  const left = Math.max(1, Math.ceil(WAVE_LEN - G.waveTimer));
-  const nextWave = G.wave + 1;
-  const nextIsBoss = nextWave % 5 === 0;
-  const nextIsElite = !nextIsBoss && nextWave % SPAWN.eliteWaveEvery === 0;
-  setText(elNext, 'next', `下一波 ${nextIsBoss ? '陨级 · ' : nextIsElite ? '精英 · ' : ''}${left}s`);
-  setFlag(elNext, 'nextWarn', nextIsBoss || nextIsElite);
+  /* 波次预告：让压力可预期（"随机的困难让玩家焦虑，可预期的困难让玩家投入"）。
+     事件期间波次计时是冻结的（updateRun 直接转 updateEvent）—— 那时候还显示倒计时会骗人，
+     改成显示事件名，把"还剩多久"交给下面那行事件进度。 */
+  const inEvent = G.phase === 'event' && !!G.eventRun;
+  let evWarn = false;
+  if (inEvent) {
+    const run = G.eventRun, def = run.def;
+    setText(elNext, 'next', `事件 · ${def.name}`);
+    if (def.id === 'hold') {
+      const z = run.zone;
+      const inZone = z && Math.hypot(player.x - z.x, player.y - z.y) <= z.r;
+      setText(elEvent, 'ev', `充能 ${run.charge.toFixed(0)}/${def.time}s` + (inZone ? '' : ' · 回到信标'));
+      evWarn = !inZone || (def.time - run.charge) <= 6;
+    } else {
+      const left = Math.max(1, Math.ceil(def.time - run.t));
+      setText(elEvent, 'ev', `剩余 ${left}s`);
+      evWarn = left <= 10;
+    }
+  } else {
+    const left = Math.max(1, Math.ceil(WAVE_LEN - G.waveTimer));
+    const nextWave = G.wave + 1;
+    const nextIsBoss = nextWave % 5 === 0;
+    const nextIsElite = !nextIsBoss && nextWave % SPAWN.eliteWaveEvery === 0;
+    setText(elNext, 'next', `下一波 ${nextIsBoss ? '陨级 · ' : nextIsElite ? '精英 · ' : ''}${left}s`);
+    evWarn = nextIsBoss || nextIsElite;
+    setText(elEvent, 'ev', '');
+  }
+  setFlag(elNext, 'nextWarn', evWarn);
+  setFlag(elEvent, 'evWarn', evWarn);
+  /* 事件行无内容时收起来，避免顶部正中多出一条空行（playfield first：中上区域不养赘肉） */
+  if (elEvent._evOn !== inEvent) { elEvent._evOn = inEvent; elEvent.classList.toggle('hidden', !inEvent); }
   setText(elZoom, 'zoom', zoomTarget.toFixed(1) + '×');
 
   /* 构筑一览：内容变了才重写 DOM */
@@ -2535,8 +2756,21 @@ function snapshot() {
     dps10: last10.length ? Math.round(last10.reduce((a, b) => a + b, 0) / last10.length) : 0,
     enemies: G.enemies.length,
     orbs: G.orbs.length,
+    /* 友方弹体：当前 / 本局峰值 / 被上限丢掉的总发数（上限是 MAX_ALLY_BULLET=600）。
+       dropped 一旦不为 0，说明护栏咬住了真实构筑 —— 要么调高上限，要么查构筑为什么失控。 */
+    allyBullets: G.bullets.length,
+    allyBulletPeak: G.allyBulletPeak,
+    allyBulletDropped: G.allyBulletDropped,
     weapons: player.weapons.map(w => w.id + w.lv).join(' '),
-    over: G.over
+    over: G.over,
+    /* 局内进程（0.6.0 阶段 0）：sim 验证"事件有没有真的发生、有没有成功/失败"靠这几个字段 */
+    phase: G.phase,
+    stage: G.stage,
+    beatsLeft: G.beatsLeft,
+    event: G.eventRun ? G.eventRun.def.id : null,
+    events: G.eventLog.map(e => `${e.name}:${e.success ? 'S' : 'F'}@${e.t}`).join(' '),
+    eventWin: G.eventLog.filter(e => e.success).length,
+    eventLose: G.eventLog.filter(e => !e.success).length
   };
 }
 
@@ -2556,11 +2790,29 @@ function botStep() {
     orbScore[idx] += (1 - dist / ORB_SIGHT) * 1.6;
   }
   let bestScore = -Infinity, bx = 0, by = 1;
+  /* 事件目标：机器人必须知道"这一小节/事件要干什么"，否则 sim 一行都测不出来
+     （它的势场只有"躲敌人 + 捡残片"，看不懂"去圈里"）。
+     反过来说：如果得教机器人才玩得动，说明事件确实是真决策，不是装饰。 */
+  let goal = null;
+  if (G.phase === 'event' && G.eventRun) {
+    const run = G.eventRun;
+    if (run.def.id === 'hold' && run.zone) {
+      const d = Math.hypot(run.zone.x - player.x, run.zone.y - player.y);
+      if (d > run.zone.r * 0.55) goal = { x: run.zone.x, y: run.zone.y, w: 3.4 };
+    }
+    /* hunt 不需要"追"：武器射程 620 且 Boss 会主动贴上来 —— 追上去等于送死。
+       机器人只要活着，火力自然会把目标清掉。surge 同理（顶住就是全部策略）。 */
+  }
   for (let i = 0; i < DIRS; i++) {
     const a = i * Math.PI * 2 / DIRS;
     const dx = Math.cos(a), dy = Math.sin(a);
     let score = Math.random() * 0.05;                 // 加一点抖动，避免两方向等分时抖动卡死
     score += Math.min(ORB_BONUS_CAP, orbScore[i]);
+    if (goal) {
+      const gx = goal.x - player.x, gy = goal.y - player.y;
+      const gd = Math.hypot(gx, gy) || 1;
+      score += goal.w * ((gx / gd) * dx + (gy / gd) * dy);   // 越朝目标方向加分越多
+    }
     forEachNear(player.x + dx * PROBE * 0.5, player.y + dy * PROBE * 0.5, PROBE * 0.8, (e) => {
       const rx = e.x - player.x, ry = e.y - player.y;
       const dot = rx * dx + ry * dy;
@@ -2607,15 +2859,25 @@ function smartPick(opts) {
 
 /**
  * 不渲染地推进模拟（平衡测试用）。
- * 会自动把装备终端选掉，避免卡在暂停。
+ * 会自动把装备终端选掉、把补给终端关掉，避免卡在暂停。
  * @param {number} seconds 模拟多少游戏秒
- * @param {{bot?:boolean, pick?:'random'|'first'|'smart', step?:number}} opts
+ * @param {{bot?:boolean, pick?:'random'|'first'|'smart', step?:number, shop?:boolean}} opts
  */
 function sim(seconds, opts) {
   const o = Object.assign({ bot: botOn, pick: 'smart', step: 1 / 60 }, opts || {});
   const steps = Math.min(Math.round(seconds / o.step), 60 * 60 * 60);
   for (let i = 0; i < steps; i++) {
     if (G.over) break;
+    /* 补给终端（0.6.0 阶段 0 新增）：不处理的话下面 `G.paused && !currentOptions` 会直接 break，
+       模拟会在第一次进店时就停住 —— 而商店现在一局要进 12 次。 */
+    if (panelMode === 'shop') {
+      if (o.shop !== false) {
+        const it = shopStock.find(x => player.credits >= shopPrice(x) && !(x.once && player.shopBought[x.id]));
+        if (it) buyItem(it);
+      }
+      if (panelMode === 'shop') closeShop();   // '数据注入' 会自己关店去弹升级面板，别重复关
+      continue;
+    }
     if (G.paused) {
       if (!currentOptions) break;
       const pick = o.pick === 'first' ? 0 : Math.floor(Math.random() * currentOptions.length);
@@ -2668,13 +2930,34 @@ window.__game = {
   nudgeZoom,
   bot(on) { botOn = !!on; return botOn; },
   get botOn() { return botOn; },
+  /** 调试用：松开所有输入。**换代机器人之前必须调** —— botStep 是直接写 keys 的，
+      关掉机器人不会把上一帧写进去的方向键清掉，玩家会自己一直走（实测：截图时角色飘出 800px）。 */
+  releaseInput,
   /** 局外存档（#17）：查看/调整元进度（改完调 saveMeta 才会落盘） */
   get meta() { return meta; },
   saveMeta,
   metaReward,
   /** 局内商店（#16）：B 键等价入口（与按键同样遵守"升级面板待选时不覆盖"） */
-  openShop() { if (G.over || currentOptions) return false; shopOpen = true; showShop(); return true; },
+  openShop() { if (G.over || currentOptions) return false; shopOpen = true; showShop('big'); return true; },
   closeShop,
+  /** 调试用：立刻开始一个事件（`__game.startEvent('hold')`），用于验证事件 HUD / 圈绘制 */
+  startEvent(id) {
+    if (G.over || G.eventRun) return false;
+    startEvent(G.cam.x + viewW() / 2, G.cam.y + viewH() / 2, id);
+    return true;
+  },
+  /** 调试用：局内进程结构（段 / 小节 / 事件）—— sim 验证靠它 */
+  get run() {
+    return {
+      phase: G.phase, stage: G.stage, beatsLeft: G.beatsLeft, beatWavesLeft: G.beatWavesLeft,
+      event: G.eventRun ? {
+        id: G.eventRun.def.id, name: G.eventRun.def.name,
+        t: +G.eventRun.t.toFixed(1), charge: +G.eventRun.charge.toFixed(1),
+        targetId: G.eventRun.targetId, zone: G.eventRun.zone
+      } : null,
+      log: G.eventLog
+    };
+  },
   get ship() { return shipId; },
   setShip(id) { if (!SHIPS.some(s => s.id === id)) return shipId; shipId = id; try { localStorage.setItem(SHIP_KEY, id); } catch (e) { } restart(); return shipId; },
   showShipSelect,

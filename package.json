@@ -5,6 +5,10 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "node scripts/serve.mjs"
+    "dev": "node scripts/serve.mjs",
+    "check": "node bench/weapons-check.mjs && node bench/palette-check.mjs",
+    "check:weapons": "node bench/weapons-check.mjs",
+    "check:palette": "node bench/palette-check.mjs",
+    "tables": "node bench/codex-tables.mjs"
   }
 }
