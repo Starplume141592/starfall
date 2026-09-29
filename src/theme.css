@@ -513,7 +513,7 @@ body.mobile #zoomToast { top: 46px; font-size: 11px; }
 .card.meta.on::before { background: #58a6ff; }
 /* 商品品级角标（0.6.0 阶段 A2）：只用品级语义色 —— T1/T2 走遥测色（不抢注意力），
    T3/T4 用"稀有"语义色 #F0E442。同带内的区分靠**字符**（T1..T4），不靠新颜色。 */
-.card.shop .nm .tier {
+.card.shop .tier {
   margin-left: 6px; padding: 1px 5px; font-size: 10px; letter-spacing: 0.08em;
   color: #8FB0CF; border: 1px solid rgba(143, 176, 207, 0.35); border-radius: 3px;
   background: rgba(143, 176, 207, 0.08); vertical-align: 2px;
@@ -780,3 +780,49 @@ body.mobile #cornerbar > button { padding: 8px 12px; font-size: 12px; }
 .menu-row { display: flex; gap: 10px; justify-content: center; margin: 10px 0 2px; }
 .menu-row .btn { min-width: 132px; }
 #panel .sub.hint { margin-top: 14px; font-size: 11px; letter-spacing: 0.06em; color: #5f89b3; }
+
+/* ---------- 商店网格（阶段 A 后半）：为"几十上百件"设计的版式 ----------
+   为什么改：单列大卡在大铺 6 件时够用，但商品池上百件、货架变宽之后就是一条读不完的竖列。
+   网格 + 固定卡高 + 一屏尽量多放，才能"扫读 + 比价"—— 而比价正是商店最核心的动作。 */
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 10px;
+  margin: 12px 0 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.shop-grid .card.shop {
+  width: auto;
+  min-height: 168px;
+  position: relative;
+  padding: 12px 12px 20px;
+  text-align: left;
+}
+/* 商店面板放宽：网格要宽度才谈得上"一屏多货"（其余面板不受影响） */
+#panel:has(#shopGrid) { min-width: 760px; max-width: 1040px; width: 88vw; }
+
+.shop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.shop-grid .lock {
+  cursor: pointer; opacity: 0.45; font-size: 14px; line-height: 1;
+  padding: 3px 5px; border-radius: 4px; transition: opacity .15s, background .15s;
+}
+.shop-grid .lock:hover { opacity: 1; background: rgba(143, 176, 207, 0.12); }
+.card.shop.locked { border-color: rgba(240, 228, 66, 0.34); }
+.card.shop.locked .lock { opacity: 1; }
+/* 类别只靠**语义色**区分，不新增颜色：武器=遥测蓝、机制=稀有色、道具=默认 */
+.card.shop.weapon { border-color: rgba(99, 179, 255, 0.26); }
+.card.shop.mech { border-color: rgba(240, 228, 66, 0.20); }
+.card.shop .key {
+  position: absolute; right: 9px; bottom: 6px;
+  font-size: 10px; letter-spacing: 0.1em; color: #5f89b3; opacity: 0.75;
+}
+.shop-actions { display: flex; gap: 10px; justify-content: center; }
+.shop-actions .btn { min-width: 200px; }
+/* 快捷键提示：贴在按钮里，比另起一行说明更容易被发现 */
+.btn .hk {
+  margin-left: 8px; font-size: 10px; opacity: 0.5;
+  border: 1px solid currentColor; border-radius: 3px; padding: 0 4px;
+  vertical-align: 1px;
+}

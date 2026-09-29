@@ -525,9 +525,46 @@ export const ITEMS = [
   { id: 'bargain', name: '商人牌', icon: '🏷️', tier: 3, base: 140, max: 2, mech: 'bargain', desc: '本局商店价格 −12%（可叠加 2 层）' },
   { id: 'sniper', name: '狙击套件', icon: '🎯', tier: 3, base: 120, stats: { rangeMul: 0.35, crit: 0.12, atkSpd: -0.10 } },
 
+  /* ---- 阶段 A 后半扩容（1/2）：T1 / T2 / T3 补齐 ---- */
+  { id: 'ammo_belt', name: '备用弹链', icon: '🔗', tier: 1, base: 30, stats: { atkSpd: 0.06 } },
+  { id: 'light_frame', name: '轻质骨架', icon: '🪶', tier: 1, base: 30, stats: { speed: 14 } },
+  { id: 'micro_calib', name: '微调校准仪', icon: '🔧', tier: 1, base: 35, stats: { critDmg: 0.15 } },
+  { id: 'coil', name: '磁力线圈', icon: '🧵', tier: 1, base: 30, stats: { pickupRange: 30 } },
+  { id: 'regulator', name: '稳压器', icon: '🔌', tier: 1, base: 35, stats: { regen: 0.3 } },
+  { id: 'scrap', name: '废料回收', icon: '♻️', tier: 1, base: 25, stats: { credits: 70 }, desc: '立刻获得 70 信用点' },
+  { id: 'light_plate', name: '简易护板', icon: '🛠️', tier: 1, base: 30, stats: { maxHp: 18 } },
+
+  { id: 'combat_drug', name: '战斗药剂', icon: '💉', tier: 2, base: 65, stats: { dmgMul: 0.12, maxHp: -8 } },
+  { id: 'circ_pump', name: '循环泵', icon: '🫧', tier: 2, base: 65, stats: { atkSpd: 0.12, speed: -12 } },
+  { id: 'phase_coat', name: '相位涂层', icon: '🌫️', tier: 2, base: 70, stats: { dodge: 0.06, maxHp: -10 } },
+  { id: 'ballistics', name: '弹道计算机', icon: '🖥️', tier: 2, base: 75, stats: { rangeMul: 0.20, crit: 0.04 } },
+  { id: 'medkit', name: '医疗包', icon: '⛑️', tier: 2, base: 40, stats: { hpNow: 60 }, desc: '立刻回复 60 生命' },
+  { id: 'scrap_station', name: '废料站', icon: '🏗️', tier: 2, base: 70, stats: { harvest: 5 } },
+  { id: 'scav_pack', name: '拾荒背包', icon: '🎒', tier: 2, base: 60, stats: { orbPullMul: 0.40, pickupRange: 30 } },
+  { id: 'coolant_loop', name: '冷却回路', icon: '❄️', tier: 2, base: 70, stats: { atkSpd: 0.10, rangeMul: 0.10 } },
+
+  { id: 'mech_shard', name: '残片共振', icon: '🔮', tier: 3, base: 130, mech: 'shardstack', desc: '每拾取 25 个残片，本局伤害永久 +4%（可叠加）' },
+  { id: 'mech_reflect', name: '反射装甲', icon: '🪞', tier: 3, base: 120, mech: 'reflect', desc: '受伤时对周围 95 范围内的敌人造成伤害' },
+  { id: 'mech_overkill', name: '过杀溢出', icon: '🌊', tier: 3, base: 130, mech: 'overkill', desc: '击杀时把超出致死伤害的 50% 溅射到附近敌人' },
+  { id: 'mech_pierce', name: '穿透强化', icon: '📌', tier: 3, base: 120, mech: 'piercePlus', desc: '所有弹体 +1 穿透（每一层再 +1）' },
+  { id: 'sniper_chip', name: '狙击芯片', icon: '🎯', tier: 3, base: 125, stats: { rangeMul: 0.30, critDmg: 0.50 } },
+  { id: 'berserk', name: '狂战士血清', icon: '🧪', tier: 3, base: 135, stats: { dmgMul: 0.35, dr: -0.08 } },
+  { id: 'emergency_core', name: '应急护盾核心', icon: '🧱', tier: 3, base: 115, stats: { maxHp: 60, dr: 0.06, speed: -20 } },
+  { id: 'hunter_chip', name: '猎手芯片', icon: '🦅', tier: 3, base: 125, stats: { crit: 0.10, critDmg: 0.40, rangeMul: 0.15 } },
+  { id: 'bulkhead', name: '隔舱装甲', icon: '🚪', tier: 3, base: 120, stats: { maxHp: 90, dr: 0.05, speed: -18 } },
+
   /* ---- T4：传说（一局最多见几次） ---- */
   { id: 'warmachine', name: '战争机器', icon: '🤖', tier: 4, base: 240, stats: { dmgMul: 0.35, atkSpd: 0.25, maxHp: 50, speed: -20 } },
-  { id: 'inject', name: '数据注入', icon: '📡', tier: 4, base: 180, flag: 'levelup', desc: '立刻获得 1 级经验（会触发升级面板）' }
+  { id: 'inject', name: '数据注入', icon: '📡', tier: 4, base: 180, flag: 'levelup', desc: '立刻获得 1 级经验（会触发升级面板）' },
+  /* ---- 阶段 A 后半扩容（2/2）：T4 补齐 ---- */
+  { id: 'reactor', name: '反应堆超载', icon: '🌟', tier: 4, base: 230, stats: { dmgMul: 0.70, atkSpd: 0.20, speed: -25 } },
+  { id: 'engine', name: '奇点引擎', icon: '🌀', tier: 4, base: 210, stats: { pickupRange: 150, orbPullMul: 1.0, speed: -10 } },
+  { id: 'titan', name: '泰坦装甲', icon: '🗿', tier: 4, base: 220, stats: { pctMaxHp: 0.35, dr: 0.08, speed: -30 } },
+  { id: 'bloodpact', name: '血族契约', icon: '🧛', tier: 4, base: 200, stats: { killHealFlat: 1.6, maxHp: -40 } },
+  { id: 'storm_core', name: '磁暴核心', icon: '⛈️', tier: 4, base: 240, mech: 'chainkill', desc: '击杀时引发大范围爆炸（与"连锁反应"可叠加）' },
+  { id: 'fortune', name: '命运骰子', icon: '🎲', tier: 4, base: 190, stats: { luck: 8 }, desc: '幸运 +8：商店更容易出现高品级商品' },
+  { id: 'apex_core', name: '顶点核心', icon: '💠', tier: 4, base: 250, stats: { dmgMul: 0.45, crit: 0.10, atkSpd: 0.10 } },
+  { id: 'aegis_drive', name: '永恒驱动', icon: '🔷', tier: 4, base: 235, stats: { dr: 0.10, regen: 1.2, maxHp: 40, speed: -15 } }
 ];
 
 
@@ -661,8 +698,11 @@ export const RUN = {
   /* 商店里武器占货架的比重（Brotato 是 35%）——武器进商店之后，
      "买武器还是买道具"必须是同一个货架上的取舍。 */
   weaponSlotChance: 0.35,
-  smallShopItems: 3,       // 小铺：从现有 6 件里随机抽 3 件
-  bigShopItems: 6,         // 大铺：现有 6 件全上（阶段 1 才做分类商品池）
+  /* 锁定格上限（阶段 A 后半）：锁定免费、跨波保留、**价格冻结** —— 它是"用一格换时间"的期权。
+     给 3 格：再多会让"每次进店必须立刻决策"的压力消失（Brotato 的实测是先例）。 */
+  shopLockMax: 3,
+  smallShopItems: 4,       // 小铺：4 格（网格版；旧单列布局只能放 3）
+  bigShopItems: 8,         // 大铺：8 格（网格版，一屏放得下且可扫读/比价）
   /* 事件奖励：**占位数值**。A7 的"奖励档位"是阶段 4 的事，
      阶段 0 只要证明"成功和失败拿到的东西确实不一样"。 */
   reward: { win: 90, lose: 25 }

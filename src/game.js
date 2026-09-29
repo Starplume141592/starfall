@@ -345,6 +345,10 @@ function reset() {
     orbsCollected: 0, expFromOrbs: 0,
     shopVisits: 0, shopVisitsSqueezed: 0, shopVisitsBroke: 0, shopAffordTotal: 0,
     shopBuys: 0, shopSpent: 0, shopRerolls: 0, shopLocks: 0,
+    /* 桌面商店（阶段 A 后半）：本店已付费刷新次数、本店免费刷新是否还在、跨波保留的锁定格 */
+    shopPaidRerolls: 0, shopFreeReroll: true, shopLocks: [],
+    shardCount: 0,
+    shopVisitsLocked: 0, shopLocksUsed: 0,
     shopVisitCounted: false,
     /* 局内进程结构（0.6.0 阶段 0）：phase 是唯一权威的"现在处于哪一段"。
        wave 的推进只在 phase==='beat' 与 'event' 期间发生（面板开着时游戏本来就暂停）。 */
@@ -401,6 +405,18 @@ window.addEventListener('keydown', e => {
     if (panelMode === 'ship' || panelMode === 'meta') return;   // 开局菜单：ESC 没有"关闭"的语义
     if (!currentOptions) togglePause();
     return;
+  }
+  if (panelMode === 'shop') {                    // 商店开着时的快捷键（阶段 A 后半）
+    if (e.code === 'KeyR') { rerollShop(); return; }
+    const row = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9',
+      'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4', 'Numpad5', 'Numpad6', 'Numpad7', 'Numpad8', 'Numpad9'];
+    const idx = row.indexOf(e.code);
+    if (idx >= 0) {
+      const entry = shopStock[idx];
+      if (entry && buyItem(entry.it, entry.price) && shopOpen) showShop(panel._shopKind);
+      return;
+    }
+    return;                                      // 商店开着时吞掉其余字母键，避免误触发对局操作
   }
   if (e.code === 'KeyB') {                       // 局内商店（#16）
     /* 升级面板待选择时不开商店：否则会把那一级的选择面板盖掉（pendingLevels 还在，
@@ -589,6 +605,8 @@ function fireBullet(x, y, angle, spd, r, dmg, life, src) {
  *  返回 false 表示这一发被上限丢掉（调用方无需处理，但 `dropped` 会计数）。 */
 function fireAllyBullet(b) {
   if (G.bullets.length >= MAX_ALLY_BULLET) { G.allyBulletDropped++; return false; }
+  /* 机制：穿透强化 —— 所有走这个入口的弹体统一 +N 穿透（单入口的好处：一处生效全部） */
+  if (player.mechs && player.mechs.piercePlus) b.pierce = (b.pierce || 0) + player.mechs.piercePlus;
   G.bullets.push(b);
   /* 长度只在 push 时增长，所以这里取到的就是峰值 —— 不必每帧扫一遍容器 */
   if (G.bullets.length > G.allyBulletPeak) G.allyBulletPeak = G.bullets.length;
@@ -748,6 +766,7 @@ function hurtEnemy(e, dmg, kx, ky) {
   const crit = Math.random() < player.crit;
   const mul = e.vulnMul || 1;
   const real = (crit ? dmg * (player.critDmg || 2) : dmg) * mul;
+  const hpBefore = e.hp;                    // 机制"过杀溢出"要用：致死时多出来的那部分
   e.hp -= real;
   e.kx += kx || 0; e.ky += ky || 0;
   e.flash = 0.09;
@@ -772,6 +791,10 @@ function hurtEnemy(e, dmg, kx, ky) {
     player.kills++;
     audio.kill();
     fireMechs('onKill', e);          // 机制：击杀触发（连锁反应等）；mechBlast 内部有深度护栏防递归
+    if (player.mechs && player.mechs.overkill) {
+      const over = real - hpBefore;
+      if (over > 0) fireMechs('onOverkill', e, over);
+    }
 
     /* 局内信用点（#16 商店的唯一来源）：**只来自事件** —— 精英波与首领。
        随机精英化的小怪（最高占 26% 生成量）不付钱：按它付等于按怪群规模发钱，
@@ -1277,7 +1300,23 @@ const MECH_REGISTRY = {
   /* 背水一战：生命低于 35% 时攻击速度 +25%（百分比越大越危险越强） */
   rage: { name: '背水一战' },
   /* 锚定射击：静止 0.8 秒后伤害 +30%，一移动就重置（把"风筝"与"站桩"变成真取舍） */
-  standfast: { name: '锚定射击' }
+  standfast: { name: '锚定射击' },
+  /* 残片共振：每拾取 25 个残片，**永久** +4% 伤害（层数可叠加）——
+     把"贪心去捡"从习惯变成一条成长线 */
+  shardstack: { name: '残片共振' },
+  /* 反射装甲：受伤时对周围造成伤害（被动反击，不需要操作） */
+  reflect: {
+    name: '反射装甲',
+    onDamaged(taken, n) { mechBlast(player.x, player.y, 95, (10 + G.wave * 1.6) * n); }
+  },
+  /* 过杀溢出：击杀时把"超出致死的那部分伤害"的 50% 溅射出去 ——
+     让高伤单体武器在清群时也不浪费 */
+  overkill: {
+    name: '过杀溢出',
+    onOverkill(e, over, n) { mechBlast(e.x, e.y, 70, over * 0.5 * n); }
+  },
+  /* 穿透强化：所有弹体 +1 穿透（挂在 fireAllyBullet 单入口上） */
+  piercePlus: { name: '穿透强化' }
 };
 
 /** 机制的 AoE 伤害（唯一入口，带深度护栏） */
@@ -1397,8 +1436,8 @@ function drawStock(n) {
 
 /** 能不能买：**一处判定** —— 面板高亮 / 进店记账 / sim 机器人三处共用。
  *  上限 `max`、"已拥有即不再出现"（护盾）、以及**武器槽位**都只在这里判定。 */
-function canBuy(it) {
-  if (player.credits < shopPrice(it)) return false;
+function canBuy(it, priceOverride) {
+  if (player.credits < (priceOverride === undefined ? shopPrice(it) : priceOverride)) return false;
   if (it.weapon) {
     const same = player.weapons.find(w => w.id === it.weapon && w.tier === it.tier && w.tier < 4);
     /* 槽位上限必须夹住 —— 否则模组(+2) 叠升级卡(+3) 能到 8 格，实测出现过 8 把武器 */
@@ -1410,9 +1449,12 @@ function canBuy(it) {
   return true;
 }
 
-function buyItem(item) {
-  const price = shopPrice(item);
-  if (!canBuy(item)) { audio.hurt(); return false; }
+function buyItem(item, priceOverride) {
+  const price = priceOverride === undefined ? shopPrice(item) : priceOverride;
+  if (!canBuy(item, price)) { audio.hurt(); return false; }
+  /* 买走的锁定格要解锁（否则它会一直占着锁定位） */
+  const li = G.shopLocks.findIndex(l => l.it.id === item.id);
+  if (li >= 0) G.shopLocks.splice(li, 1);
   player.credits -= price;
   player.shopBought[item.id] = (player.shopBought[item.id] || 0) + 1;
   player.shopCount = (player.shopCount || 0) + 1;
@@ -1488,64 +1530,136 @@ function flushPendingPanel() {
 
 /** 商店面板：小铺每小节之间自动弹、大铺每个事件之后自动弹；B 键也随时能手动开（走大铺货架）。
  *  信用点只来自精英/首领 + 事件奖励。 */
+/** 刷新价（阶段 A 后半）：随**小节**上涨，本店内每付一次递增，**每次进店重置**。
+ *  形状抄 Brotato 的结构性事实：商品价全程约 ×3，而刷新价涨幅远大于它 ——
+ *  于是"早期随便刷、后期必须挑"。店里第一次刷新免费（保证"不满意能换"，不额外花钱）。 */
+function refreshPrice() {
+  if (G.shopFreeReroll) return 0;
+  const beat = Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat);
+  return Math.round((5 + beat * 5) * (1 + 0.7 * G.shopPaidRerolls));
+}
+
+/** 抽一批新货（尊重同店不重复、每局上限、已锁定的件不重复出现） */
+function drawVisitStock() {
+  const isBig = panel._shopKind === 'big';
+  const n = isBig ? RUN.bigShopItems : RUN.smallShopItems;
+  const fresh = drawStock(n + G.shopLocks.length).filter(x => !G.shopLocks.some(l => l.it.id === x.id));
+  const stock = [...G.shopLocks.map(l => ({ it: l.it, price: l.price, locked: true }))];
+  for (const it of fresh) {
+    if (stock.length >= n) break;
+    stock.push({ it, price: shopPrice(it), locked: false });
+  }
+  return stock;
+}
+
+/** 刷新货架：锁定格保留（**价格冻结**），其余整批换掉 */
+function rerollShop() {
+  const price = refreshPrice();
+  if (price > 0) {
+    if (player.credits < price) { audio.hurt(); return false; }
+    player.credits -= price;
+    G.shopPaidRerolls++;
+    G.shopSpent += price;
+  } else {
+    G.shopFreeReroll = false;
+  }
+  G.shopRerolls++;
+  shopStock = drawVisitStock();
+  audio.pickup();
+  showShop(panel._shopKind);
+  return true;
+}
+
+/** 锁定 / 解锁一格：**免费**，跨波保留，且**价格冻结**（免疫随小节上涨）。 */
+function toggleLock(entry) {
+  if (!entry) return;
+  const i = G.shopLocks.findIndex(l => l.it.id === entry.it.id);
+  if (i >= 0) {
+    G.shopLocks.splice(i, 1);
+    audio.hit();
+  } else {
+    if (G.shopLocks.length >= RUN.shopLockMax) { audio.hurt(); addText(player.x, player.y - 50, `锁定格已满（${RUN.shopLockMax}）`, PALETTE.enemyBullet, 16); return; }
+    G.shopLocks.push({ it: entry.it, price: entry.price });
+    G.shopLocksUsed++;
+    audio.levelUp();
+  }
+  if (shopOpen) showShop(panel._shopKind);
+}
+
+/** 商店面板（阶段 A 后半重做）：**网格货架**，为"几十上百件"设计 ——
+ *  一屏尽量多放货、能扫读、能比价。原来的单列大卡在大铺 6 件时够用，
+ *  一旦商品池上百件、货架变宽就会变成一条读不完的竖列。
+ *
+ *  桌面交互：点击卡片购买 · 点 🔒 锁定（免费、跨波冻价）· R 刷新 · 1-9 买第 N 件 · ESC/B 离开。 */
 function showShop(kind) {
   const isBig = kind === 'big';
+  panel._shopKind = kind;
   G.paused = true;
   currentOptions = null;
   panel._shipPick = null;
   panelMode = 'shop';
   shopOpen = true;
   pauseEl.classList.add('hidden');     // 同上：别让暂停层压住遮罩
-  /* 货架：小铺从现有 6 件里随机抽 RUN.smallShopItems 件（"这次进店有什么"本身是信息），
-     大铺全上。分类商品池是阶段 1 的事 —— 阶段 0 先证明"两种规格的节奏"成立。 */
+  if (!G.shopVisitCounted) { shopStock = drawVisitStock(); }
   const n = isBig ? RUN.bigShopItems : RUN.smallShopItems;
-  shopStock = drawStock(n);
   /* 进店记一次账（每买一件都会重绘面板，所以用标志位保证"一次进店只记一次"）。
      squeezed = 买得起至少 1 件、但买不起全部 —— 那才叫决策；broke = 一件也买不起。
      判据（重排稿 §4 阶段 A）：squeezed 占比 ≥40%、broke 占比要低。 */
   if (!G.shopVisitCounted) {
     G.shopVisitCounted = true;
-    const afford = shopStock.filter(it => canBuy(it)).length;
+    const afford = shopStock.filter(e => canBuy(e.it, e.price)).length;
     G.shopVisits++;
     G.shopAffordTotal += afford;
+    G.shopVisitsLocked += G.shopLocks.length;
     if (afford === 0) G.shopVisitsBroke++;
     else if (afford < shopStock.length) G.shopVisitsSqueezed++;
   }
-  const rows = shopStock.map(it => {
-    const price = shopPrice(it);
-    /* 上限（`max`）与护盾这类"已拥有就不再出现"的特例：买满即显示"已满" */
+  const rows = shopStock.map((e, i) => {
+    const it = e.it;
+    const price = e.price;
     const bought = player.shopBought[it.id] || 0;
     const full = (it.max !== undefined && it.max >= 0 && bought >= it.max) || (it.flag === 'shield' && player.shield);
-    const afford = player.credits >= price && !full;
+    const afford = canBuy(it, price);
+    const kind0 = it.weapon ? 'weapon' : (it.mech ? 'mech' : 'item');
     const left = (it.max !== undefined && it.max >= 0) ? ` · 上限 ${it.max}` : '';
-    return `<div class="card shop${afford ? '' : ' off'}" data-item="${it.id}">
-      <div class="ic">${iconFor(it.id, '#FFD166', it.icon)}</div>
-      <div class="nm">${it.name}<span class="tier t${it.tier}">T${it.tier}</span></div>
+    return `<div class="card shop ${kind0}${afford ? '' : ' off'}${e.locked ? ' locked' : ''}" data-i="${i}" data-item="${it.id}">
+      <div class="shop-head">
+        <span class="tier t${it.tier || 1}">T${it.tier || 1}</span>
+        <span class="lock" data-lock="${i}" title="锁定（免费·跨波保留·价格冻结）">${e.locked ? '🔒' : '🔓'}</span>
+      </div>
+      <div class="ic">${iconFor(it.id, it.weapon ? (it.icolor || '#63b3ff') : '#FFD166', it.icon)}</div>
+      <div class="nm">${it.name}</div>
       <div class="lv">${full ? '已满' : price + ' 信用点'}${left}</div>
       <div class="ds">${it.desc || statsText(it.stats || {})}</div>
+      <div class="key">${i < 9 ? i + 1 : ''}</div>
     </div>`;
   }).join('');
   const title = isBig ? '补给终端 · 整备' : '补给终端 · 前哨';
-  const priceNote = `价格随小节上涨（现在第 ${Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat) + 1} 小节）`;
-  const sub = isBig
-    ? `事件结算后的整备机会 · ${priceNote}`
-    : `小节之间的前哨 · 只有 ${RUN.smallShopItems} 件现货 · ${priceNote}`;
+  const beatNow = Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat) + 1;
+  const rp = refreshPrice();
+  const sub = `第 ${beatNow} 小节 · 价格随小节上涨 · 锁定 ${G.shopLocks.length}/${RUN.shopLockMax} · 按 B 或 ESC 关闭`;
   panel.innerHTML = `<h2>${title} // 信用点 ${Math.round(player.credits)}</h2>
-    <p class="sub">${sub} · 按 B 或 ESC 关闭</p>
-    <div id="cards">${rows}</div>
-    <button class="btn alt" id="shopClose">返回战场</button>`;
+    <p class="sub">${sub}</p>
+    <div id="shopGrid" class="shop-grid">${rows}</div>
+    <div class="shop-actions">
+      <button class="btn alt" id="shopReroll">${rp === 0 ? '刷新（本店免费 1 次）' : `刷新 · ${rp} 信用点`}<span class="hk">R</span></button>
+      <button class="btn alt" id="shopClose">返回战场<span class="hk">ESC</span></button>
+    </div>
+    <p class="sub hint">点击卡片购买 · 点 🔒 锁定（免费·跨波·冻价）· R 刷新 · 数字键买第 N 件</p>`;
   overlay.classList.add('show');
   panel.querySelectorAll('.card').forEach(el => {
-    el.onclick = () => {
-      const it = shopStock.find(x => x.id === el.dataset.item);
-      if (it) buyItem(it);
-      /* 只有商店还开着才重绘。'数据注入' 会主动关店去弹升级面板 ——
-         无条件重绘会把它刚弹出的面板覆盖掉（实测：升级了但面板是商店，玩家以为升级丢了）。 */
-      if (shopOpen) showShop(kind);
+    el.onclick = (ev) => {
+      const idx = +el.dataset.i;
+      const entry = shopStock[idx];
+      if (!entry) return;
+      /* 点 🔒 只切锁定，不购买（否则"想锁却买到"是必然发生的误操作） */
+      if (ev.target.closest('.lock')) { toggleLock(entry); return; }
+      buyItem(entry.it, entry.price);
+      if (shopOpen) showShop(kind);       // '数据注入' 会主动关店去弹升级面板
     };
   });
-  /* 必须有关闭按钮：面板开着时遮罩会挡住右下角按钮，而手机上没有 ESC / B ——
-     只靠键盘退出的话，手机会卡在商店里出不来。 */
+  const rr = document.getElementById('shopReroll');
+  if (rr) rr.onclick = () => rerollShop();
   const sc = document.getElementById('shopClose');
   if (sc) sc.onclick = closeShop;
 }
@@ -1556,6 +1670,8 @@ function closeShop() {
   panelMode = null;
   currentOptions = null;
   G.shopVisitCounted = false;      // 下一次进店重新记账
+  G.shopPaidRerolls = 0;           // 刷新价每次进店重置；免费刷新也恢复
+  G.shopFreeReroll = true;
   /* 关店 = 推进进程。这是"商店是进程的一部分"的落点：
      小铺 → 继续本段；大铺 → 进下一段；大铺且已是最后一段 → 结算（通关）。 */
   if (G.phase === 'bigShop') {
@@ -2931,6 +3047,14 @@ function update(dt) {
       G.orbs.splice(i, 1);
       gainExp(o.val);
       G.orbsCollected++; G.expFromOrbs += o.val;
+      /* 机制：残片共振 —— 每 25 个残片永久 +4% 伤害/层（层数可叠加） */
+      if (player.mechs && player.mechs.shardstack) {
+        G.shardCount++;
+        if (G.shardCount % 25 === 0) {
+          player.dmgMul += 0.04 * player.mechs.shardstack;
+          mechPing(player.x, player.y - 46, PALETTE.elite, '残片共振 +4%');
+        }
+      }
       G.creditAcc += o.val * ECON.orbPerExp * ((player.mods && player.mods.scavenger) ? 2.5 : 1);
       const credit = Math.floor(G.creditAcc);
       if (credit > 0) { G.creditAcc -= credit; gainCredits(credit, 'orb'); }
@@ -3217,6 +3341,24 @@ function botStep() {
   keys.KeyW = by < -0.35; keys.KeyS = by > 0.35;
 }
 
+/** 机器人购物评分（**只影响测量**，不影响游戏规则）：
+ *  武器 > 机制 > 伤害类属性 > 防御类属性（落后时）> 经济件。
+ *  真人普遍"先保证打得动，再谈活得久，最后才买经济"——机器人按同一优先级花钱，
+ *  测出来的时长才有意义。 */
+function botShopScore(it) {
+  let s = 0;
+  const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (player.slotUp || 0));
+  if (it.weapon) s += player.weapons.length < slots ? 100 : 70;
+  if (it.mech) s += 75;
+  const st = it.stats || {};
+  if (st.dmgMul || st.atkSpd || st.crit || st.critDmg || st.meleeDmg || st.rangedDmg || st.elemDmg || st.rangeMul) s += 70;
+  if (st.maxHp || st.pctMaxHp || st.dr || st.dodge || st.regen || st.killHealFlat) s += (player.maxHp < 300 || player.dr < 0.2) ? 72 : 46;
+  if (st.credits || st.harvest || st.luck) s += 22;
+  if ((st.speed || 0) < 0 || (st.maxHp || 0) < 0) s -= 8;
+  if (it.tier >= 3) s += 8;
+  return s;
+}
+
 /** 生存向属性卡：机器人判断"该补防御了吗"时用（与 config 的 STATS id 对应） */
 const DEF_STATS = new Set(['hp', 'hpPct', 'armor', 'heal', 'vamp']);
 
@@ -3268,9 +3410,14 @@ function sim(seconds, opts) {
       if (o.shop !== false) {
         for (let k = 0; k < 8; k++) {
           if (panelMode !== 'shop') break;              // '数据注入' 会自己关店去弹升级面板
-          const it = shopStock.find(x => canBuy(x));
-          if (!it) break;
-          if (!buyItem(it)) break;
+          /* 像人一样**挑着买**：旧版"买得起就买"会把钱花在幸运币/收获机这类经济件上，
+             于是机器人的 DPS 被自己压低 —— 测出来的时长是"不会花钱的玩家"，不是设计问题。
+             评分只用于**测量**，不影响游戏规则。 */
+          const best = shopStock.filter(e => canBuy(e.it, e.price))
+            .map(e => ({ e, s: botShopScore(e.it) }))
+            .sort((a, b) => b.s - a.s)[0];
+          if (!best || best.s < 40) break;              // 低于阈值的货不值得买，钱留着
+          if (!buyItem(best.e.it, best.e.price)) break;
         }
       }
       if (panelMode === 'shop') closeShop();   // '数据注入' 会自己关店去弹升级面板，别重复关
