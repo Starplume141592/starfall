@@ -7,7 +7,8 @@ import {
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
-  PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, SHOP_ITEMS, CREDIT, SHOP_INFLATE,
+  PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, SHOP_ITEMS, CREDIT, shopPriceOf,
+  ORB_CREDIT_PER_EXP,
   VERSION, REPO_URL, ISSUE_URL, FEEDBACK_KINDS, FEEDBACK_MAIL,
   expNeed, mkName
 } from './config.js';
@@ -327,10 +328,18 @@ function reset() {
     /* 友方弹体上限的可观测项：峰值 + 被上限丢掉的发数（见 MAX_ALLY_BULLET 注释）。
        上限静默咬住 = 隐性 DPS 削减，所以必须能被看见 —— 这两个数只在这里和 fireAllyBullet 里动。 */
     allyBulletPeak: 0, allyBulletDropped: 0,
+    /* 经济观测项（0.6.0 阶段 A）："钱从哪来、够不够花"必须可读数 —— 判据
+       （≥40% 的进店存在真实取舍、一局购买次数中位数 ≥8）就是靠这些数跑出来的，不靠体感。
+       squeezed = 进店时"买得起至少 1 件、但买不起全部"的次数：**那才叫决策**。 */
+    creditsEarned: 0, creditsBySource: {}, creditAcc: 0,
+    orbsCollected: 0, expFromOrbs: 0,
+    shopVisits: 0, shopVisitsSqueezed: 0, shopVisitsBroke: 0, shopAffordTotal: 0,
+    shopBuys: 0, shopSpent: 0, shopRerolls: 0, shopLocks: 0,
+    shopVisitCounted: false,
     /* 局内进程结构（0.6.0 阶段 0）：phase 是唯一权威的"现在处于哪一段"。
        wave 的推进只在 phase==='beat' 与 'event' 期间发生（面板开着时游戏本来就暂停）。 */
     phase: 'beat', stage: 1,
-    beatsLeft: RUN.beatsPerStage, beatWavesLeft: RUN.wavePerBeat,
+    beatsLeft: RUN.beatsPerStage, beatWavesLeft: RUN.wavePerBeat, shopWavesLeft: RUN.shopEveryWaves,
     eventRun: null, eventLog: []
   };
   pendingLevels = 0; shake = 0; hitStop = 0; flashA = 0;
@@ -751,8 +760,8 @@ function hurtEnemy(e, dmg, kx, ky) {
        随机精英化的小怪（最高占 26% 生成量）不付钱：按它付等于按怪群规模发钱，
        实测一整局会到 2428 点（够买 15 次），商店就变成清仓而不是取舍。
        精英波的怪带上 paysCredit 标记，钱因此是"可预期的事件奖励"。 */
-    if (e.boss) { player.credits += CREDIT.boss; addText(e.x, e.y - 34, `+${CREDIT.boss} 信用点`, '#FFD166', 18); }
-    else if (e.paysCredit) { player.credits += CREDIT.elite; addText(e.x, e.y - 30, `+${CREDIT.elite} 信用点`, '#FFD166', 14); }
+    if (e.boss) { gainCredits(CREDIT.boss, 'boss'); addText(e.x, e.y - 34, `+${CREDIT.boss} 信用点`, '#FFD166', 18); }
+    else if (e.paysCredit) { gainCredits(CREDIT.elite, 'elite'); addText(e.x, e.y - 30, `+${CREDIT.elite} 信用点`, '#FFD166', 14); }
 
     /* 击杀回复（纳米虫群 + 噬能涂层）—— 每秒最多回 5% 最大生命，
        否则后期每秒几十杀会变成无敌。所有吸血途径都必须汇进这一条限速里。 */
@@ -1125,13 +1134,27 @@ function showShipSelect(silent) {
 }
 
 /* ==================== 局内商店（#16） ==================== */
-/** 价格随"本局买过几次"上涨（SHOP_INFLATE），所以它是一局内的资源分配题。
- *  注意：只按**本局总购买次数**算 —— 早期版本写成 `本件次数 + 本局总次数`，
- *  本件自己的次数被加了两次，于是"买同一件"实际每次 +70%，而面板上写着 +35%
- *  （图鉴核对时发现的价格与文案不符）。 */
+/** 价格随**小节**上涨（阶段 A 改，旧模型是"每买一次全场 +60%"）——
+ *  小节序号 = 已打完的波数 ÷ 每小节波数，用波数推、不依赖 phase 的具体取值，
+ *  这样"这一波买"和"下一波买"的差价是确定的，玩家可以算。 */
 function shopPrice(item) {
-  const bought = player.shopCount || 0;
-  return Math.round(item.base * (1 + bought * SHOP_INFLATE));
+  const beat = Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat);
+  return shopPriceOf(item.base, beat);
+}
+
+/** 经济调参的运行时可调值（调试钩子 `__game.setEcon`）。
+ *  阶段 A 的判据要跑十几二十局才看得出来，而每改一次配置文件都得重载页面 —— 太慢。
+ *  默认值仍然来自 config（ORB_CREDIT_PER_EXP），这里只是允许在一次会话里扫参数。 */
+const ECON = { orbPerExp: ORB_CREDIT_PER_EXP, shopEveryWaves: RUN.shopEveryWaves };
+
+/** 信用点的唯一入口（与 fireBullet / fireAllyBullet 同样的理由：曾经散落多处、后来收敛）。
+ *  它同时记账：`creditsBySource` 是阶段 A 判据的原始数据 —— "钱从哪来、够不够花"必须可读数，
+ *  否则调价格只能靠猜。 */
+function gainCredits(n, source) {  if (!n) return 0;
+  player.credits += n;
+  G.creditsEarned += n;
+  G.creditsBySource[source] = (G.creditsBySource[source] || 0) + n;
+  return n;
 }
 
 function buyItem(item) {
@@ -1141,6 +1164,7 @@ function buyItem(item) {
   player.credits -= price;
   player.shopBought[item.id] = (player.shopBought[item.id] || 0) + 1;
   player.shopCount = (player.shopCount || 0) + 1;
+  G.shopBuys++; G.shopSpent += price;
   switch (item.id) {
     case 'repair': player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.4); break;
     case 'plate': player.maxHp += 40; player.hp += 40; break;
@@ -1208,6 +1232,17 @@ function showShop(kind) {
      大铺全上。分类商品池是阶段 1 的事 —— 阶段 0 先证明"两种规格的节奏"成立。 */
   const n = isBig ? RUN.bigShopItems : RUN.smallShopItems;
   shopStock = SHOP_ITEMS.slice().sort(() => Math.random() - 0.5).slice(0, n);
+  /* 进店记一次账（每买一件都会重绘面板，所以用标志位保证"一次进店只记一次"）。
+     squeezed = 买得起至少 1 件、但买不起全部 —— 那才叫决策；broke = 一件也买不起。
+     判据（重排稿 §4 阶段 A）：squeezed 占比 ≥40%、broke 占比要低。 */
+  if (!G.shopVisitCounted) {
+    G.shopVisitCounted = true;
+    const afford = shopStock.filter(it => player.credits >= shopPrice(it) && !(it.once && player.shopBought[it.id])).length;
+    G.shopVisits++;
+    G.shopAffordTotal += afford;
+    if (afford === 0) G.shopVisitsBroke++;
+    else if (afford < shopStock.length) G.shopVisitsSqueezed++;
+  }
   const rows = shopStock.map(it => {
     const price = shopPrice(it);
     const owned = it.once && player.shopBought[it.id];
@@ -1220,9 +1255,10 @@ function showShop(kind) {
     </div>`;
   }).join('');
   const title = isBig ? '补给终端 · 整备' : '补给终端 · 前哨';
+  const priceNote = `价格随小节上涨（现在第 ${Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat) + 1} 小节）`;
   const sub = isBig
-    ? `事件结算后的整备机会 · 每买一次全场涨价 ${Math.round(SHOP_INFLATE * 100)}%`
-    : `小节之间的前哨 · 只有 ${RUN.smallShopItems} 件现货 · 每买一次全场涨价 ${Math.round(SHOP_INFLATE * 100)}%`;
+    ? `事件结算后的整备机会 · ${priceNote}`
+    : `小节之间的前哨 · 只有 ${RUN.smallShopItems} 件现货 · ${priceNote}`;
   panel.innerHTML = `<h2>${title} // 信用点 ${Math.round(player.credits)}</h2>
     <p class="sub">${sub} · 按 B 或 ESC 关闭</p>
     <div id="cards">${rows}</div>
@@ -1248,6 +1284,7 @@ function closeShop() {
   shopOpen = false;
   panelMode = null;
   currentOptions = null;
+  G.shopVisitCounted = false;      // 下一次进店重新记账
   /* 关店 = 推进进程。这是"商店是进程的一部分"的落点：
      小铺 → 继续本段；大铺 → 进下一段；大铺且已是最后一段 → 结算（通关）。 */
   if (G.phase === 'bigShop') {
@@ -1255,6 +1292,7 @@ function closeShop() {
     G.stage++;
     G.beatsLeft = RUN.beatsPerStage;
     G.beatWavesLeft = RUN.wavePerBeat;
+    G.shopWavesLeft = ECON.shopEveryWaves;
     G.phase = 'beat';
   } else if (G.phase === 'smallShop') {
     G.phase = 'beat';
@@ -1746,14 +1784,21 @@ function updateRun(dt) {
     addText(cx, cy - 100, `第 ${G.wave} 波`, '#58a6ff', 26);
     if (G.wave % SPAWN.eliteWaveEvery === 0) addText(cx, cy - 62, '精英波', PALETTE.elite, 20);
 
-    /* ---- 小节推进：走满 wavePerBeat 个波就是一个小节 ---- */
+    /* ---- 商店调度（阶段 A 重排）----
+       小节推进：走满 wavePerBeat 个波就是一个小节 —— 小节末尾要么开事件、要么开小铺。
+       小节**之内**再按 RUN.shopEveryWaves 补一次小铺：实测每小节只开一次时一局只有 9 次进店
+       （Brotato 是 20 次），而"决策密度"正是靠进店次数撑起来的。
+       shopEveryWaves = wavePerBeat 时行为与旧版**完全一致**（可选两种节奏跑数据对比）。 */
+    G.shopWavesLeft--;
     if (--G.beatWavesLeft <= 0) {
       G.beatWavesLeft = RUN.wavePerBeat;
       G.beatsLeft--;
+      G.shopWavesLeft = ECON.shopEveryWaves;    // 本节最后一次由事件 / 大铺接走
       if (G.beatsLeft <= 0) { startEvent(cx, cy); return; }
       openShop('small');
       return;
     }
+    if (G.shopWavesLeft <= 0) { G.shopWavesLeft = ECON.shopEveryWaves; openShop('small'); return; }
   }
   if (G.wave % 5 === 0 && !G.bossSpawned) {
     G.bossSpawned = true;
@@ -1850,7 +1895,7 @@ function endEvent(success, cx, cy) {
   /* 奖励：占位数值 —— A7 的"奖励档位"是阶段 4 的事，
      阶段 0 只要证明成功和失败拿到的东西**确实不一样**。 */
   const gain = success ? RUN.reward.win : RUN.reward.lose;
-  player.credits += gain;
+  gainCredits(gain, 'event');
   /* used = 事件实际花了多久（调"事件难度"就看它：猎杀看几秒打死、据点看充能花了多少，
      全部贴着时限完成 = 事件太软，A7 的奖励档位就没有牙齿） */
   G.eventLog.push({ id: def.id, name: def.name, success, t: Math.round(G.t), used: run ? +run.t.toFixed(1) : 0, gain });
@@ -2563,7 +2608,17 @@ function update(dt) {
     }
     o.x += o.vx * dt; o.y += o.vy * dt;
     o.vx *= drag.orb; o.vy *= drag.orb;
-    if (d < player.r + ORB_ABSORB_PAD) { G.orbs.splice(i, 1); gainExp(o.val); audio.pickup(); }
+    /* 碎片**一份两用**（阶段 A）：同时给经验与信用点 —— 见 config: ORB_CREDIT_PER_EXP。
+       信用点按小数累加、取整发放，避免"每颗碎片都向上取整"把收入放大成失控。 */
+    if (d < player.r + ORB_ABSORB_PAD) {
+      G.orbs.splice(i, 1);
+      gainExp(o.val);
+      G.orbsCollected++; G.expFromOrbs += o.val;
+      G.creditAcc += o.val * ECON.orbPerExp;
+      const credit = Math.floor(G.creditAcc);
+      if (credit > 0) { G.creditAcc -= credit; gainCredits(credit, 'orb'); }
+      audio.pickup();
+    }
   }
 
   /* 残片上限：超出时把最远的那批「价值并入」最后一颗，而不是删掉 ——
@@ -2770,7 +2825,20 @@ function snapshot() {
     event: G.eventRun ? G.eventRun.def.id : null,
     events: G.eventLog.map(e => `${e.name}:${e.success ? 'S' : 'F'}@${e.t}`).join(' '),
     eventWin: G.eventLog.filter(e => e.success).length,
-    eventLose: G.eventLog.filter(e => !e.success).length
+    eventLose: G.eventLog.filter(e => !e.success).length,
+    /* 经济（0.6.0 阶段 A）：一局的钱从哪来、够不够花。判据就是这几个数 ——
+       squeezed/shopVisits ≥ 40%、shopBuys 中位数 ≥ 8（跑 20 局看分布，不看单局）。 */
+    credits: Math.round(player.credits),
+    creditsEarned: Math.round(G.creditsEarned),
+    creditMix: ['orb', 'elite', 'boss', 'event'].map(k => `${k}${Math.round(G.creditsBySource[k] || 0)}`).join('/'),
+    orbsCollected: G.orbsCollected,
+    expFromOrbs: Math.round(G.expFromOrbs),
+    shopVisits: G.shopVisits,
+    shopTight: G.shopVisitsSqueezed,
+    shopBroke: G.shopVisitsBroke,
+    shopAvgAfford: G.shopVisits ? +(G.shopAffordTotal / G.shopVisits).toFixed(1) : 0,
+    shopBuys: G.shopBuys,
+    shopSpent: G.shopSpent
   };
 }
 
@@ -2871,9 +2939,16 @@ function sim(seconds, opts) {
     /* 补给终端（0.6.0 阶段 0 新增）：不处理的话下面 `G.paused && !currentOptions` 会直接 break，
        模拟会在第一次进店时就停住 —— 而商店现在一局要进 12 次。 */
     if (panelMode === 'shop') {
+      /* 像人一样买：**买得起就继续买**，直到买不动或本店没得买为止。
+          旧版只买一件就关店 —— 于是"一局购买次数"被机器人限制在"进店次数"上，
+          测不出经济到底松不松（阶段 A 的判据全靠这个数）。上限 8 件防死循环。 */
       if (o.shop !== false) {
-        const it = shopStock.find(x => player.credits >= shopPrice(x) && !(x.once && player.shopBought[x.id]));
-        if (it) buyItem(it);
+        for (let k = 0; k < 8; k++) {
+          if (panelMode !== 'shop') break;              // '数据注入' 会自己关店去弹升级面板
+          const it = shopStock.find(x => player.credits >= shopPrice(x) && !(x.once && player.shopBought[x.id]));
+          if (!it) break;
+          if (!buyItem(it)) break;
+        }
       }
       if (panelMode === 'shop') closeShop();   // '数据注入' 会自己关店去弹升级面板，别重复关
       continue;
@@ -2930,6 +3005,15 @@ window.__game = {
   nudgeZoom,
   bot(on) { botOn = !!on; return botOn; },
   get botOn() { return botOn; },
+  /** 经济调参（阶段 A）：`__game.setEcon({ orbPerExp: 1/90, shopEveryWaves: 2 })` 后可重跑 sim 扫参数 */
+  setEcon(o) {
+    if (o) {
+      if (typeof o.orbPerExp === 'number') ECON.orbPerExp = o.orbPerExp;
+      if (typeof o.shopEveryWaves === 'number') ECON.shopEveryWaves = o.shopEveryWaves;
+    }
+    return { ...ECON };
+  },
+  get econ() { return { ...ECON }; },
   /** 调试用：松开所有输入。**换代机器人之前必须调** —— botStep 是直接写 keys 的，
       关掉机器人不会把上一帧写进去的方向键清掉，玩家会自己一直走（实测：截图时角色飘出 800px）。 */
   releaseInput,

@@ -70,12 +70,12 @@ if (want('econ')) {
   line('经济：XP / 商店 / 局外存档 / 永久强化');
   console.log('  expNeed(lv) = floor(11 + lv*4.2 + lv^2*0.52)');
   for (const lv of [1, 5, 10, 20, 30, 40, 50, 60, 70]) console.log(`    lv${String(lv).padStart(2)} → ${Math.round(cfg.expNeed(lv))}`);
-  console.log(`\n  局内商店（SHOP_ITEMS，涨价 SHOP_INFLATE=${cfg.SHOP_INFLATE}，价格 = base × (1 + 本局购买次数 × ${cfg.SHOP_INFLATE})）`);
+  console.log(`\n  局内商店（SHOP_ITEMS，价格随**小节**上涨：SHOP_PRICE=${JSON.stringify(cfg.SHOP_PRICE)}，一局 ${cfg.RUN.stages * cfg.RUN.beatsPerStage} 小节）`);
   for (const it of cfg.SHOP_ITEMS) {
-    const p = n => Math.round(it.base * (1 + n * cfg.SHOP_INFLATE));
-    console.log(`    ${it.id.padEnd(8)} ${it.name.padEnd(6)} base=${String(it.base).padStart(3)}  第1..5次 = ${[0, 1, 2, 3, 4].map(p).join(' / ')}  ${it.once ? '（一局一次）' : ''}`);
+    const p = b => cfg.shopPriceOf(it.base, b);
+    console.log(`    ${it.id.padEnd(8)} ${it.name.padEnd(6)} base=${String(it.base).padStart(3)}  第1..9小节 = ${[0, 1, 2, 3, 4, 5, 6, 7, 8].map(p).join(' / ')}  ${it.once ? '（一局一次）' : ''}`);
   }
-  console.log(`\n  信用点来源 CREDIT ${JSON.stringify(cfg.CREDIT)}（只有精英波与首领给钱）`);
+  console.log(`\n  信用点来源 CREDIT ${JSON.stringify(cfg.CREDIT)}（精英波与首领）+ 事件奖励 + **碎片一份两用**（每 ${(1 / cfg.ORB_CREDIT_PER_EXP).toFixed(0)} 点碎片经验 = 1 信用点）`);
   console.log(`  局外结算 = floor(存活秒/12 + 波次*2 + 击毁/120)`);
   line('永久强化 META_UPGRADES（价格 = cost(lv) 升到 lv+1）');
   for (const u of cfg.META_UPGRADES) {
@@ -97,7 +97,8 @@ if (want('limits')) {
     MAX_ENEMY: cfg.MAX_ENEMY, MAX_ENEMY_BULLET: cfg.MAX_ENEMY_BULLET, MAX_ENEMY_BULLET_RESERVE: cfg.MAX_ENEMY_BULLET_RESERVE,
     ORB_MAX: cfg.ORB_MAX, ORB: JSON.stringify(cfg.ORB), PICKUP_MAGNET_RANGE: cfg.PICKUP_MAGNET_RANGE,
     WAVE_LEN: cfg.WAVE_LEN, SPAWN: JSON.stringify(cfg.SPAWN), VERSION: cfg.VERSION,
-    FEEDBACK_MAIL: cfg.FEEDBACK_MAIL, SHOP_INFLATE: cfg.SHOP_INFLATE
+    FEEDBACK_MAIL: cfg.FEEDBACK_MAIL, SHOP_PRICE: JSON.stringify(cfg.SHOP_PRICE),
+    ORB_CREDIT_PER_EXP: cfg.ORB_CREDIT_PER_EXP
   };
   for (const k in kv) console.log(`  ${k.padEnd(26)} ${kv[k]}`);
   const ranges = Object.keys(cfg.WEAPONS).map(id => cfg.weaponRange(id, 7));
