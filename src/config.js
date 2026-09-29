@@ -469,14 +469,21 @@ export const ITEMS = [
   { id: 'elem_amp', name: '元素增幅器', icon: '⚡', tier: 2, base: 70, stats: { elemDmg: 0.22 } },
   { id: 'vamp', name: '吸血协议', icon: '🩸', tier: 2, base: 80, stats: { killHealFlat: 0.8 } },
   { id: 'spring', name: '弹性装甲', icon: '🌀', tier: 2, base: 70, stats: { dodge: 0.08 } },
+  { id: 'vendetta', name: '反击电容', icon: '🩹', tier: 2, base: 80, mech: 'vendetta', desc: '受伤后 4 秒内伤害 +30%（被打了反而更强）' },
+  { id: 'wavegift', name: '波次补给', icon: '📯', tier: 2, base: 70, mech: 'wavegift', desc: '每波开始：回复 12 生命并 +8 信用点' },
+  { id: 'rage', name: '背水一战', icon: '🫀', tier: 2, base: 75, mech: 'rage', desc: '生命低于 35% 时攻击速度 +25%' },
   { id: 'phase', name: '相位发生器', icon: '🔵', tier: 2, base: 90, flag: 'shield', desc: '获得相位护盾：每 10 秒完全抵挡一次伤害' },
   { id: 'caravan', name: '商队契约', icon: '💠', tier: 2, base: 50, flag: 'money', desc: '立刻获得 110 信用点' },
 
-  /* ---- T3：稀有，强效果带真代价 ---- */
+  /* ---- T3：稀有，强效果带真代价 + **机制件**（改玩法，不只是数值） ---- */
   { id: 'overcap', name: '过载电容', icon: '🔋', tier: 3, base: 130, stats: { dmgMul: 0.45, atkSpd: -0.15 } },
   { id: 'glass', name: '命悬一线', icon: '💀', tier: 3, base: 130, stats: { dmgMul: 0.60, pctMaxHp: -0.30 } },
   { id: 'forge', name: '装甲熔炉', icon: '🏭', tier: 3, base: 120, stats: { dr: 0.12, speed: -30 } },
-  { id: 'greed', name: '贪婪核心', icon: '🤑', tier: 3, base: 140, stats: { creditsPerKill: 1 } },
+  { id: 'greed', name: '贪婪核心', icon: '🤑', tier: 3, base: 140, stats: { creditsPerKill: 0.15 }, desc: '每击杀累积 0.15 信用点（一局约 +300）' },
+  { id: 'chainkill', name: '连锁反应', icon: '💣', tier: 3, base: 130, mech: 'chainkill', desc: '击杀敌人时在小范围内引发爆炸（可叠加）' },
+  { id: 'critnova', name: '暴击新星', icon: '✨', tier: 3, base: 120, mech: 'critnova', desc: '暴击时在目标处炸开，伤害为暴击的 30%' },
+  { id: 'standfast', name: '锚定射击', icon: '⚓', tier: 3, base: 120, mech: 'standfast', desc: '静止 0.8 秒后伤害 +30%，一移动即重置' },
+  { id: 'bargain', name: '商人牌', icon: '🏷️', tier: 3, base: 140, max: 2, mech: 'bargain', desc: '本局商店价格 −12%（可叠加 2 层）' },
   { id: 'singularity', name: '引力奇点', icon: '🕳️', tier: 3, base: 120, flag: 'lockOrbs', stats: { pickupRange: 120, orbPullMul: 0.6 } },
   { id: 'slowfield', name: '时滞立场', icon: '⏳', tier: 3, base: 130, flag: 'slowfield', desc: '260 范围内的敌方单位速度 −30%' },
   { id: 'sniper', name: '狙击套件', icon: '🎯', tier: 3, base: 120, stats: { rangeMul: 0.35, crit: 0.12, atkSpd: -0.10 } },

@@ -309,6 +309,8 @@ function reset() {
        critDmg 默认 2.0（暴击倍率）、rangeMul 默认 1（射程倍率）—— 其余都是 0 起步的加项。 */
     critDmg: PLAYER.critDmg || 2.0, dodge: 0, atkSpd: 0, rangeMul: 1,
     meleeDmg: 0, rangedDmg: 0, elemDmg: 0, harvest: 0, luck: 0, creditsPerKill: 0,
+    /* 机制层（阶段 A3）：mechs 是 id→层数；后三个是机制用的计时器/状态 */
+    mechs: {}, vendettaT: 0, standT: 0,
     level: 1, exp: 0, expNext: expNeed(1),
     pickupRange: (ship.pick || PLAYER.pickupRange) + mb.pick,
     dmgMul: (ship.dmgMul || PLAYER.dmgMul) + mb.dmgMul,
@@ -336,6 +338,8 @@ function reset() {
        （≥40% 的进店存在真实取舍、一局购买次数中位数 ≥8）就是靠这些数跑出来的，不靠体感。
        squeezed = 进店时"买得起至少 1 件、但买不起全部"的次数：**那才叫决策**。 */
     creditsEarned: 0, creditsBySource: {}, creditAcc: 0, killCreditAcc: 0,
+    /* 机制层观测项：mechBlasts = 机制爆炸触发次数（判据：带了机制的商品必须在 sim 里真的触发过） */
+    mechDepth: 0, mechBlasts: 0,
     orbsCollected: 0, expFromOrbs: 0,
     shopVisits: 0, shopVisitsSqueezed: 0, shopVisitsBroke: 0, shopAffordTotal: 0,
     shopBuys: 0, shopSpent: 0, shopRerolls: 0, shopLocks: 0,
@@ -746,6 +750,7 @@ function hurtEnemy(e, dmg, kx, ky) {
   e.kx += kx || 0; e.ky += ky || 0;
   e.flash = 0.09;
   G.dmgAcc += real;                 // DPS 统计
+  if (crit) fireMechs('onCrit', e, real);    // 机制：暴击触发（暴击新星等）
   audio.hit();
 
   // 瘫痪期间飘字变黄加粗
@@ -759,6 +764,7 @@ function hurtEnemy(e, dmg, kx, ky) {
     e.dead = true;
     player.kills++;
     audio.kill();
+    fireMechs('onKill', e);          // 机制：击杀触发（连锁反应等）；mechBlast 内部有深度护栏防递归
 
     /* 局内信用点（#16 商店的唯一来源）：**只来自事件** —— 精英波与首领。
        随机精英化的小怪（最高占 26% 生成量）不付钱：按它付等于按怪群规模发钱，
@@ -873,6 +879,7 @@ function damagePlayer(dmg, src) {
   }
   const real = Math.max(1, dmg * grace * (1 - player.dr));
   player.hp -= real;
+  fireMechs('onDamaged', real);      // 机制：受伤触发（反击电容等）
   if (src) G.dmgTaken[src] = (G.dmgTaken[src] || 0) + real;    // 调试：伤害来源统计
   player.invuln = PLAYER.invuln;
   audio.hurt();
@@ -1158,7 +1165,9 @@ function showShipSelect(silent) {
  *  这样"这一波买"和"下一波买"的差价是确定的，玩家可以算。 */
 function shopPrice(item) {
   const beat = Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat);
-  return shopPriceOf(item.base, beat);
+  /* 机制：商人牌 —— 每层 −12% 商店价格（价格是构筑的一部分，不只是"省钱"） */
+  const disc = 1 - 0.12 * ((player.mechs && player.mechs.bargain) || 0);
+  return Math.max(1, Math.round(shopPriceOf(item.base, beat) * disc));
 }
 
 /** 经济调参的运行时可调值（调试钩子 `__game.setEcon`）。
@@ -1180,6 +1189,71 @@ function gainCredits(n, source) {
 /* ==================== 属性矩阵 + 商品池（阶段 A2） ==================== */
 /** 通用属性应用器：**商品与升级卡都走这里** —— 加商品只需要在 config 的 ITEMS 里加一行数据，
  *  不必再写一段代码。特例（回复 / 护盾 / 升级 / 吸残片 / 立刻给钱）靠 `flag` 分流，见 buyItem。 */
+/* ==================== 机制层（阶段 A3）：商品能带来"新玩法"，不只是属性 ====================
+   为什么要有这一层：属性组合能把商品做**多**，但只有机制能让商品做**有意思**。
+   做法：**机制 = 数据 + 钩子** —— 商品带 `mech` 字段，买下时把 handler 注册进 `player.mechs`，
+   游戏只在**少数几个固定事件点**调用它们（击杀 / 暴击 / 受伤 / 波开始 / 商店价格 / 每帧被动）。
+   加一个新机制 = 一个 handler + 一行商品数据，不需要在十几个地方插代码。
+   （本轮之前刚吃过反面的教训：武器冷却逻辑散落 7 处、射程索敌 5 处 —— 那种地方加机制必错。）
+
+   注意：机制**不写进 `stats`**（那不是属性），所以 HUD 的数值面板不会被它们污染。 */
+const MECH_REGISTRY = {
+  /* 击杀时小范围爆炸。防递归靠 G.mechDepth：爆炸也会击杀，击杀又触发爆炸。 */
+  chainkill: {
+    name: '连锁反应',
+    onKill(e, n) { mechBlast(e.x, e.y, 70, (10 + G.wave * 2.2) * n); }
+  },
+  /* 暴击时在目标处炸开 —— 把"堆暴击"从纯数值变成一种清屏手段 */
+  critnova: {
+    name: '暴击新星',
+    onCrit(e, dmg, n) { mechBlast(e.x, e.y, 60, dmg * 0.30 * n); }
+  },
+  /* 受伤后 4 秒内伤害 +30%（被打了反而更强） */
+  vendetta: {
+    name: '反击电容',
+    onDamaged(n) { player.vendettaT = 4 * n; }
+  },
+  /* 每波开始：回一点血 + 给一点信用点（把"熬过去"变成一种正反馈） */
+  wavegift: {
+    name: '波次补给',
+    onWaveStart(n) {
+      player.hp = Math.min(player.maxHp, player.hp + 12 * n);
+      gainCredits(8 * n, 'mech');
+    }
+  },
+  /* 商店折扣（价格是构筑的一部分，不只是"打折省钱"） */
+  bargain: { name: '商人牌' },
+  /* 背水一战：生命低于 35% 时攻击速度 +25%（百分比越大越危险越强） */
+  rage: { name: '背水一战' },
+  /* 锚定射击：静止 0.8 秒后伤害 +30%，一移动就重置（把"风筝"与"站桩"变成真取舍） */
+  standfast: { name: '锚定射击' }
+};
+
+/** 机制的 AoE 伤害（唯一入口，带深度护栏） */
+function mechBlast(x, y, radius, dmg) {
+  if (G.mechDepth >= 2 || dmg <= 0) return;
+  G.mechDepth++;
+  G.mechBlasts++;
+  forEachNear(x, y, radius, (e) => { if (!e.dead) hurtEnemy(e, dmg, 0, 0); });
+  G.mechDepth--;
+}
+
+/** 触发机制钩子。`player.mechs` 是 id → 层数（可叠加，层数进倍率）。 */
+function fireMechs(hook, ...args) {
+  const mechs = player.mechs;
+  if (!mechs) return;
+  for (const id in mechs) {
+    const def = MECH_REGISTRY[id];
+    if (def && def[hook]) def[hook](...args, mechs[id]);
+  }
+}
+
+/** 机制生效时的**可见反馈**：机制是隐形的力量，不给反馈玩家就感觉不到它 */
+function mechPing(x, y, color, text) {
+  if (text) addText(x, y, text, color, 15);
+  burst(x, y, color, 6, 180);
+}
+
 function applyStats(p, stats) {
   for (const k in stats) {
     const v = stats[k];
@@ -1260,6 +1334,12 @@ function buyItem(item) {
   G.shopBuys++; G.shopSpent += price;
 
   if (item.stats) applyStats(player, item.stats);
+  /* 机制层：注册 handler（可叠加，层数进倍率）。机制不写进 stats，所以数值面板不会被污染。 */
+  if (item.mech) {
+    player.mechs[item.mech] = (player.mechs[item.mech] || 0) + 1;
+    const m = MECH_REGISTRY[item.mech];
+    if (m) mechPing(player.x, player.y - 56, PALETTE.elite, `机制 · ${m.name}`);
+  }
   switch (item.flag) {
     case 'heal40': player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.4); break;
     case 'shield': player.shield = true; player.shieldCd = 0; break;
@@ -1604,12 +1684,18 @@ function weaponDamage(def, lv) {
   const cls = weaponClass(def);
   const classBonus = cls === 'melee' ? (player.meleeDmg || 0)
     : cls === 'elem' ? (player.elemDmg || 0) : (player.rangedDmg || 0);
-  return def.dmg(lv) * (player.dmgMul + classBonus);
+  /* 机制加成（不写进 stats，所以不污染数值面板）：
+     锚定射击 = 静止 0.8 秒后 +30%/层；反击电容 = 受伤后 4 秒内 +30%/层 */
+  const standBonus = player.standT >= 0.8 ? 0.30 * (player.mechs.standfast || 0) : 0;
+  const vendBonus = player.vendettaT > 0 ? 0.30 * (player.mechs.vendetta || 0) : 0;
+  return def.dmg(lv) * (player.dmgMul + classBonus) * (1 + standBonus + vendBonus);
 }
 
 /** 武器冷却的唯一入口（原来 `def.cd(lv) * player.cdMul` 散落在 7 处 —— 攻击速度必须只在这里生效） */
 function weaponCooldown(def, lv) {
-  return def.cd(lv) * player.cdMul / (1 + (player.atkSpd || 0));
+  /* 机制：背水一战 —— 生命低于 35% 时攻速 +25%/层 */
+  const rageSpd = (player.hp / player.maxHp < 0.35) ? 0.25 * (player.mechs.rage || 0) : 0;
+  return def.cd(lv) * player.cdMul / (1 + (player.atkSpd || 0) + rageSpd);
 }
 
 /** 武器射程（含射程加成）—— 索敌与弹体寿命都用它，避免两处口径不一致 */
@@ -1900,6 +1986,7 @@ function updateRun(dt) {
     G.eliteWaveSpawned = false;
     G.eventWarned = false;
     addText(cx, cy - 100, `第 ${G.wave} 波`, '#58a6ff', 26);
+    fireMechs('onWaveStart');        // 机制：波开始触发（波次补给等）
     if (G.wave % SPAWN.eliteWaveEvery === 0) addText(cx, cy - 62, '精英波', PALETTE.elite, 20);
 
     /* ---- 商店调度（阶段 A 重排）----
@@ -2141,6 +2228,12 @@ function update(dt) {
 
   if (player.invuln > 0) player.invuln -= dt;
   if (player.shieldCd > 0) player.shieldCd -= dt;
+
+  /* 机制层的被动计时（阶段 A3）：
+     锚定射击 = 速度接近 0 才算"站住"，一动就重置；反击电容 = 受伤后的增益窗口。 */
+  const pSpd = Math.hypot(player.vx, player.vy);
+  if (pSpd < 30) player.standT += dt; else player.standT = 0;
+  if (player.vendettaT > 0) player.vendettaT = Math.max(0, player.vendettaT - dt);
 
   /* 模组：纳米自修复 */
   if (player.regen > 0) player.hp = Math.min(player.maxHp, player.hp + player.regen * dt);
@@ -2956,7 +3049,10 @@ function snapshot() {
     shopBroke: G.shopVisitsBroke,
     shopAvgAfford: G.shopVisits ? +(G.shopAffordTotal / G.shopVisits).toFixed(1) : 0,
     shopBuys: G.shopBuys,
-    shopSpent: G.shopSpent
+    shopSpent: G.shopSpent,
+    /* 机制层（阶段 A3）：带机制的商品必须在 sim 里**真的触发过** —— 否则它等于没做 */
+    mechs: Object.keys(player.mechs || {}).join(',') || '-',
+    mechBlasts: G.mechBlasts
   };
 }
 
