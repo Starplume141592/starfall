@@ -339,7 +339,7 @@ function reset() {
        squeezed = 进店时"买得起至少 1 件、但买不起全部"的次数：**那才叫决策**。 */
     creditsEarned: 0, creditsBySource: {}, creditAcc: 0, killCreditAcc: 0,
     /* 机制层观测项：mechBlasts = 机制爆炸触发次数（判据：带了机制的商品必须在 sim 里真的触发过） */
-    mechDepth: 0, mechBlasts: 0,
+    mechDepth: 0, mechBlasts: 0, stormHits: 0,
     /* 武器来源记账（阶段 B1）：回答"武器到底从哪来" —— 商店 / 事件 / 掉落 / 解锁 / 彩蛋 */
     weaponBySource: {},
     orbsCollected: 0, expFromOrbs: 0,
@@ -753,6 +753,11 @@ function hurtEnemy(e, dmg, kx, ky) {
   e.flash = 0.09;
   G.dmgAcc += real;                 // DPS 统计
   if (crit) fireMechs('onCrit', e, real);    // 机制：暴击触发（暴击新星等）
+  /* 模组：磁暴弹头 —— 每 8 次命中触发一次小爆炸（让单体武器也有清群手段） */
+  if (player.mods && player.mods.storm && ++G.stormHits >= 8) {
+    G.stormHits = 0;
+    mechBlast(e.x, e.y, 55, 8 + G.wave * 1.6);
+  }
   audio.hit();
 
   // 瘫痪期间飘字变黄加粗
@@ -777,8 +782,8 @@ function hurtEnemy(e, dmg, kx, ky) {
 
     /* 「每击杀信用点」（贪婪核心）：小数累加、取整发放 —— 一局几千次击杀，
         按 1 点/杀直接给会把一局收入翻倍；0.15/杀 ≈ 一局 +300，才是"值得买但不到崩盘"。 */
-    if (player.creditsPerKill) {
-      G.killCreditAcc += player.creditsPerKill;
+    if (player.creditsPerKill || CREDIT.perKill) {
+      G.killCreditAcc += (CREDIT.perKill || 0) + player.creditsPerKill;
       const c = Math.floor(G.killCreditAcc);
       if (c > 0) { G.killCreditAcc -= c; gainCredits(c, 'kill'); }
     }
@@ -862,7 +867,7 @@ function damagePlayer(dmg, src) {
   if (player.invuln > 0 || G.over) return;
   /* 相位护盾模组：每 10 秒完全抵挡一次（与卡面文案一致） */
   if (player.shield && player.shieldCd <= 0) {
-    player.shieldCd = 10;
+    player.shieldCd = (player.mods && player.mods.aegis) ? 6 : 10;
     player.invuln = PLAYER.invuln;
     shake = Math.max(shake, 8);
     audio.shield();
@@ -967,7 +972,8 @@ function grantWeapon(id, tier, source) {
     audio.levelUp();
     return 'combine';
   }
-  const slots = RUN.weaponSlots + (player.slotUp || 0);
+  /* 槽位上限必须夹住 —— 否则模组(+2) 叠升级卡(+3) 能到 8 格，实测出现过 8 把武器 */
+  const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (player.slotUp || 0));
   if (player.weapons.length >= slots) {
     addText(player.x, player.y - 54, '武器槽已满', PALETTE.enemyBullet, 18);
     audio.hurt();
@@ -998,7 +1004,8 @@ function buildOptions() {
   const pool = [];
   /* 武器槽位：一条**结构性**选择（不是数值）—— 槽位决定你能同时押几把武器，
      进而决定同名合成与"吃哪类属性"的空间。权重刻意低于属性卡：它是"为未来投资"，不该每级都来。 */
-  const slots = RUN.weaponSlots + (player.slotUp || 0);
+  /* 槽位上限必须夹住 —— 否则模组(+2) 叠升级卡(+3) 能到 8 格，实测出现过 8 把武器 */
+  const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (player.slotUp || 0));
   if (slots < RUN.maxWeaponSlots) {
     pool.push({
       kind: 'slot', name: '武器槽位', icon: '🗂️', iid: 'slot', w: 1.3,
@@ -1284,13 +1291,18 @@ function applyStats(p, stats) {
   }
 }
 
-/** 品级抽取（阶段 A2）：按**小节**逐级解锁，越往后越容易出高品级；幸运提高高档权重。
- *  形状参考 Brotato（T2 从第 2 波、T3 从第 4、T4 从第 8，带每波增量与上限），缩放到我们 9 个小节。 */
+/** 品级抽取（阶段 A2/B1）：按**小节**逐级解锁，越往后越容易出高品级；幸运提高高档权重。
+ *
+ *  解锁时点按**一局占比**对齐 Brotato（T2 约 10% / T3 约 20% / T4 约 40%），
+ *  而不是按绝对波数摊。我们一局 9 个小节 → T2 第 1 小节起、T3 第 2 起、T4 第 4 起。
+ *
+ *  实测教训：原来 T3 排在第 3 小节、T4 第 6 小节，而**武器只占货架 35%**，
+ *  于是"同名合成"这条路在一局里根本走不通 —— 玩家永远停在品级 I–II，DPS 起不来（第 13 波就死）。 */
 function drawTier(beat) {
   const luck = 1 + (player.luck || 0) * 0.03;                  // 幸运：每点 +3% 高档权重
-  const w4 = beat >= 6 ? Math.min(0.08, (beat - 5) * 0.012) * luck : 0;
-  const w3 = beat >= 3 ? Math.min(0.28, (beat - 2) * 0.045) * luck : 0;
-  const w2 = beat >= 1 ? Math.min(0.60, beat * 0.11) * luck : 0;
+  const w4 = beat >= 3 ? Math.min(0.10, (beat - 2) * 0.016) * luck : 0;
+  const w3 = beat >= 1 ? Math.min(0.30, (beat - 0.5) * 0.05) * luck : 0;
+  const w2 = Math.min(0.62, 0.18 + beat * 0.10) * luck;
   const r = Math.random();
   if (r < w4) return 4;
   if (r < w4 + w3) return 3;
@@ -1350,7 +1362,8 @@ function canBuy(it) {
   if (player.credits < shopPrice(it)) return false;
   if (it.weapon) {
     const same = player.weapons.find(w => w.id === it.weapon && w.tier === it.tier && w.tier < 4);
-    const slots = RUN.weaponSlots + (player.slotUp || 0);
+    /* 槽位上限必须夹住 —— 否则模组(+2) 叠升级卡(+3) 能到 8 格，实测出现过 8 把武器 */
+  const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (player.slotUp || 0));
     return !!same || player.weapons.length < slots;      // 能合成 或 还有空槽
   }
   if (it.max !== undefined && it.max >= 0 && (player.shopBought[it.id] || 0) >= it.max) return false;
@@ -1721,7 +1734,7 @@ function nearestEnemies(n, maxDist) {
 /** 武器伤害的唯一入口（属性矩阵落地在**这里**，不在 7 处开火分支里）。
  *  Brotato 式的"武器吃不同属性"：通用伤害（dmgMul）+ 该武器类别的专属伤害
  *  （melee/ranged/elem，由 mode 归类）。所以"投哪项属性"取决于你拿了哪类武器。 */
-function weaponDamage(def, lv) {
+function weaponDamage(def, lv, tier = 1) {
   const cls = weaponClass(def);
   const classBonus = cls === 'melee' ? (player.meleeDmg || 0)
     : cls === 'elem' ? (player.elemDmg || 0) : (player.rangedDmg || 0);
@@ -1729,7 +1742,15 @@ function weaponDamage(def, lv) {
      锚定射击 = 静止 0.8 秒后 +30%/层；反击电容 = 受伤后 4 秒内 +30%/层 */
   const standBonus = player.standT >= 0.8 ? 0.30 * (player.mechs.standfast || 0) : 0;
   const vendBonus = player.vendettaT > 0 ? 0.30 * (player.mechs.vendetta || 0) : 0;
-  return def.dmg(lv) * (player.dmgMul + classBonus) * (1 + standBonus + vendBonus);
+  /* 品级倍率（阶段 B1.5）：让"提升武器品级"在伤害上是**看得见的一大跳**（I→IV ≈ 4.7 倍） */
+  const tierMul = WEAPON_TIER.dmgMult[Math.max(1, Math.min(4, tier | 0))] || 1;
+  /* 模组：共鸣矩阵 —— 同类武器越多越强（奖励专精，而不是每样拿一把） */
+  let reson = 0;
+  if (player.mods && player.mods.resonance) {
+    const cls = weaponClass(def);
+    reson = 0.12 * player.weapons.filter(x => weaponClass(WEAPONS[x.id]) === cls).length;
+  }
+  return def.dmg(lv) * tierMul * (player.dmgMul + classBonus + reson) * (1 + standBonus + vendBonus);
 }
 
 /** 武器冷却的唯一入口（原来 `def.cd(lv) * player.cdMul` 散落在 7 处 —— 攻击速度必须只在这里生效） */
@@ -1747,7 +1768,7 @@ function effectiveRange(def) {
 function updateWeapons(dt) {
   for (const w of player.weapons) {
     const def = WEAPONS[w.id];
-    const dmg = weaponDamage(def, w.lv);
+    const dmg = weaponDamage(def, w.lv, w.tier);
 
     /* 追踪弹族（蜂群导弹 / 过载反应堆 / 纳米虫群）：同时多发，锁定最近的敌人 */
     if (def.mode === 'shot') {
@@ -2027,6 +2048,9 @@ function updateRun(dt) {
     G.eliteWaveSpawned = false;
     G.eventWarned = false;
     addText(cx, cy - 100, `第 ${G.wave} 波`, '#58a6ff', 26);
+    /* 波次结算收入（阶段 B1）：**与 DPS 无关**的保底收入 —— 死亡螺旋唯一能被打断的地方。
+       收获（harvest）也在这里结算：它是一条"不靠击杀"的经济投资（否则这个属性是死字段）。 */
+    gainCredits(Math.round(CREDIT.waveClear + G.wave * CREDIT.waveClearPerWave + (player.harvest || 0)), 'wave');
     fireMechs('onWaveStart');        // 机制：波开始触发（波次补给等）
     if (G.wave % SPAWN.eliteWaveEvery === 0) addText(cx, cy - 62, '精英波', PALETTE.elite, 20);
 
@@ -2287,6 +2311,8 @@ function update(dt) {
     const d = WEAPONS[w.id];
     if (d.selfDps) selfDps += d.selfDps(w.lv);
   }
+  /* 模组：超载协议 —— 自损与武器自损共用同一段逻辑与同一个 25% 下限 */
+  if (player.mods && player.mods.overload) selfDps += 2;
   if (selfDps > 0) {
     const floorHp = Math.max(1, player.maxHp * 0.25);
     if (player.hp > floorHp) {
@@ -2866,7 +2892,7 @@ function update(dt) {
       G.orbs.splice(i, 1);
       gainExp(o.val);
       G.orbsCollected++; G.expFromOrbs += o.val;
-      G.creditAcc += o.val * ECON.orbPerExp;
+      G.creditAcc += o.val * ECON.orbPerExp * ((player.mods && player.mods.scavenger) ? 2.5 : 1);
       const credit = Math.floor(G.creditAcc);
       if (credit > 0) { G.creditAcc -= credit; gainCredits(credit, 'orb'); }
       audio.pickup();
@@ -3082,7 +3108,7 @@ function snapshot() {
        squeezed/shopVisits ≥ 40%、shopBuys 中位数 ≥ 8（跑 20 局看分布，不看单局）。 */
     credits: Math.round(player.credits),
     creditsEarned: Math.round(G.creditsEarned),
-    creditMix: ['orb', 'elite', 'boss', 'event'].map(k => `${k}${Math.round(G.creditsBySource[k] || 0)}`).join('/'),
+    creditMix: ['orb', 'kill', 'wave', 'elite', 'boss', 'event', 'mech', 'shop'].map(k => `${k}${Math.round(G.creditsBySource[k] || 0)}`).join('/'),
     orbsCollected: G.orbsCollected,
     expFromOrbs: Math.round(G.expFromOrbs),
     shopVisits: G.shopVisits,

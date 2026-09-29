@@ -181,48 +181,58 @@ export const STATS = [
 export const WEAPON_TIER = {
   name: ['', 'I', 'II', 'III', 'IV'],
   lv: [0, 1, 3, 5, 7],                  // tier → 内部等级（沿用既有曲线，不改数值）
-  price: [0, 45, 115, 215, 350],        // 商店基准价（实际售价还会随小节上涨）
-  dmgMult: [0, 1.0, 1.55, 2.25, 3.2]    // 仅用于 UI 展示"伤害倍率"，不参与计算
+  price: [0, 25, 90, 190, 320],         // 商店基准价（实际售价还会随小节上涨）
+  /* 品级**额外**伤害倍率（阶段 B1.5），**真的参与计算**，叠在内部等级曲线之上。
+     为什么需要：内部等级 1/3/5/7 只是"沿旧曲线采样"，而旧曲线是 7 级线性成长 ——
+     换算成品级后 I→IV 落差只有约 2.4 倍，**成长感不足**（用户要的正是"后期成长"）。
+     加上这层之后 I→IV ≈ 4.7 倍。
+     ⚠️ 这是"成长感"的主要旋钮，而且**不动武器数值表**（weapons-check 不受影响）。 */
+  dmgMult: [0, 1.0, 1.25, 1.55, 1.95]
 };
 export const weaponLvOf = t => WEAPON_TIER.lv[Math.max(1, Math.min(4, t | 0))];
 export const weaponTierName = t => WEAPON_TIER.name[Math.max(1, Math.min(4, t | 0))];
 
-/**
- * 超频跃迁模组：每 9 级一次的稀有四选一，一次性（maxLevel 1），效果远超普通属性
+/** 超频跃迁模组（阶段 B1.6 重做）：每 9 级一次的四选一，**一次性、不可重复**。
+ *
+ *  为什么重做：旧 6 个模组里有 4 个（相位护盾 / 时滞立场 / 纳米自修复 / 引力奇点 / 超载核心）
+ *  被原样复制成了商店商品 —— "稀有模组"与货架上的 T3/T4 完全重复，玩家自然觉得鸡肋。
+ *
+ *  新定位：模组 = **商店给不了的"规则改变"**。判据：这类东西一旦放进货架就会破坏平衡，
+ *  所以只能靠升级里程碑拿一次。**数值型一律留给商品与升级卡**，模组只做结构/规则。
  */
 export const MODULES = [
   {
-    id: 'matrix', name: '火力矩阵', icon: '📡', w: 1, maxLevel: 1,
-    desc: '所有伤害 +60%',
-    apply: p => { p.dmgMul += 0.6 }
+    id: 'arsenal', name: '军械库', icon: '🗂️', maxLevel: 1,
+    desc: '武器槽位 +2（槽位商店不卖 —— 它只从升级卡与这个模组来）',
+    apply: p => { p.slotUp = (p.slotUp || 0) + 2 }
   },
   {
-    id: 'phase', name: '相位护盾', icon: '🔵', w: 1, maxLevel: 1,
-    desc: '每 10 秒完全抵挡一次伤害',
+    id: 'resonance', name: '共鸣矩阵', icon: '📡', maxLevel: 1,
+    desc: '每把**同类**武器使全局伤害 +12%（奖励专精一条线，而不是每样拿一把）',
+    apply: () => {}
+  },
+  {
+    id: 'storm', name: '磁暴弹头', icon: '🌩️', maxLevel: 1,
+    desc: '每 8 次命中引发一次电磁爆炸（让**单体武器也有清群手段**）',
+    apply: () => {}
+  },
+  {
+    id: 'overload', name: '超载协议', icon: '⚡', maxLevel: 1,
+    desc: '攻击速度 +45%，但每秒自损 2 点生命（下限压到最大生命的 25%，不会自己耗死自己）',
+    apply: p => { p.atkSpd = (p.atkSpd || 0) + 0.45 }
+  },
+  {
+    id: 'scavenger', name: '拾荒协议', icon: '🧲', maxLevel: 1,
+    desc: '残片信用点 ×2.5、经验 ×1.3（把"贪心去捡"变成一条真正的经济流派）',
+    apply: () => {}
+  },
+  {
+    id: 'aegis', name: '相位回路', icon: '🔵', maxLevel: 1,
+    desc: '获得相位护盾，且每 6 秒就能完全抵挡一次伤害（商品版是 10 秒且一局只能拿一次）',
     apply: p => { p.shield = true; p.shieldCd = 0 }
-  },
-  {
-    id: 'slowfield', name: '时滞立场', icon: '🌀', w: 1, maxLevel: 1,
-    desc: '260 范围内的敌方单位速度 -30%',
-    apply: p => { p.slowField = 0.7 }
-  },
-  {
-    id: 'nano', name: '纳米自修复', icon: '💚', w: 1, maxLevel: 1,
-    desc: '每秒回复 1.0 点生命',
-    apply: p => { p.regen += 1.0 }
-  },
-  {
-    id: 'singularity', name: '引力奇点', icon: '🕳️', w: 1, maxLevel: 1,
-    desc: '残片吸附速度 +60%，拾取范围 +120，并立刻吸引全场残片',
-    lockAllOrbs: true,               // 由 game.js 执行（config 不碰游戏状态）
-    apply: p => { p.pickupRange += 120; p.orbPullMul = (p.orbPullMul || 1) * 1.6 }
-  },
-  {
-    id: 'overcore', name: '超载核心', icon: '⚡', w: 1, maxLevel: 1,
-    desc: '伤害 +100%，但最大生命 -25%',
-    apply: p => { p.dmgMul += 1.0; p.maxHp = Math.max(60, Math.round(p.maxHp * 0.75)); p.hp = Math.min(p.hp, p.maxHp); }
   }
 ];
+
 
 /** 武器"吃哪一类属性"（Brotato 式 scaling 的简化版）。
  *  Brotato 里每把武器自己声明 `scaling_stats`；我们只有 11 把武器，按 mode 归类即可 ——
@@ -281,7 +291,20 @@ export function statsText(stats) {
  * 后段：w>25 起额外递增 —— 玩家战力在 5–7 分钟见顶，靠这段递增在 10–14 分钟越过它形成终局，
  *       否则满配玩家会无限无伤刷下去（实测过的真实问题）。
  */
-export const ENEMY_SCALE = w => (1 + w * 0.135 + w * w * 0.0014) * (1 + Math.max(0, w - 25) * 0.22);
+/* 敌人成长（阶段 B1.5 重排）：形状改成 **早期压平 + 后期陡升**。
+ *
+ *  设计意图（用户 2026-09-29）：**早期靠走位活下来，后期靠成长滚起来**。
+ *  旧曲线全程匀速上涨（线性 + 二次项），前 4 分钟就要求玩家有火力 —— 那是"早期靠 DPS"，
+ *  与我们要的相反；也正是"武器搬进商店后第 13 波就死"的直接原因：
+ *  玩家的成长（合成 / 品级 / 属性）需要**时间**才能兑现，曲线必须留出这段余地。
+ *
+ *  分段含义：
+ *  - w ≤ 12（第 1–3 小节）：只随波数温和上涨 → 走位与躲避就能活
+ *  - w 13–24：斜率抬起 → 开始要求构筑
+ *  - w ≥ 25：保留指数段 → 必须靠成型构筑（终局压力，否则一局不会结束）
+ */
+export const ENEMY_SCALE = w =>
+  (1 + w * 0.075 + w * w * 0.0022 + Math.max(0, w - 12) * 0.09) * (1 + Math.max(0, w - 25) * 0.20);
 /* 敌方伤害成长：试过调到 0.045 想补回"生成率下调"造成的压力缺口，实测反而把第 18 波前后
    变成硬墙（351 秒早死）—— 后期压力应该由机制（狙击机 / 封锁圈 / Boss 阶段 / 精英波规模）提供，
    而不是让每一次挨打都更疼。保持原值。 */
@@ -489,7 +512,6 @@ export const ITEMS = [
   { id: 'vendetta', name: '反击电容', icon: '🩹', tier: 2, base: 80, mech: 'vendetta', desc: '受伤后 4 秒内伤害 +30%（被打了反而更强）' },
   { id: 'wavegift', name: '波次补给', icon: '📯', tier: 2, base: 70, mech: 'wavegift', desc: '每波开始：回复 12 生命并 +8 信用点' },
   { id: 'rage', name: '背水一战', icon: '🫀', tier: 2, base: 75, mech: 'rage', desc: '生命低于 35% 时攻击速度 +25%' },
-  { id: 'phase', name: '相位发生器', icon: '🔵', tier: 2, base: 90, flag: 'shield', desc: '获得相位护盾：每 10 秒完全抵挡一次伤害' },
   { id: 'caravan', name: '商队契约', icon: '💠', tier: 2, base: 50, flag: 'money', desc: '立刻获得 110 信用点' },
 
   /* ---- T3：稀有，强效果带真代价 + **机制件**（改玩法，不只是数值） ---- */
@@ -501,22 +523,27 @@ export const ITEMS = [
   { id: 'critnova', name: '暴击新星', icon: '✨', tier: 3, base: 120, mech: 'critnova', desc: '暴击时在目标处炸开，伤害为暴击的 30%' },
   { id: 'standfast', name: '锚定射击', icon: '⚓', tier: 3, base: 120, mech: 'standfast', desc: '静止 0.8 秒后伤害 +30%，一移动即重置' },
   { id: 'bargain', name: '商人牌', icon: '🏷️', tier: 3, base: 140, max: 2, mech: 'bargain', desc: '本局商店价格 −12%（可叠加 2 层）' },
-  { id: 'singularity', name: '引力奇点', icon: '🕳️', tier: 3, base: 120, flag: 'lockOrbs', stats: { pickupRange: 120, orbPullMul: 0.6 } },
-  { id: 'slowfield', name: '时滞立场', icon: '⏳', tier: 3, base: 130, flag: 'slowfield', desc: '260 范围内的敌方单位速度 −30%' },
   { id: 'sniper', name: '狙击套件', icon: '🎯', tier: 3, base: 120, stats: { rangeMul: 0.35, crit: 0.12, atkSpd: -0.10 } },
 
   /* ---- T4：传说（一局最多见几次） ---- */
-  { id: 'overcore', name: '超载核心', icon: '☢️', tier: 4, base: 220, stats: { dmgMul: 0.90, pctMaxHp: -0.25 } },
-  { id: 'nano', name: '纳米自修复', icon: '🧬', tier: 4, base: 200, stats: { regen: 1.4, maxHp: 40 } },
   { id: 'warmachine', name: '战争机器', icon: '🤖', tier: 4, base: 240, stats: { dmgMul: 0.35, atkSpd: 0.25, maxHp: 50, speed: -20 } },
   { id: 'inject', name: '数据注入', icon: '📡', tier: 4, base: 180, flag: 'levelup', desc: '立刻获得 1 级经验（会触发升级面板）' }
 ];
 
 
-/** 信用点掉落：**只来自"事件"**（精英波 / 首领）+ 事件奖励 + 碎片（见 ORB_CREDIT_PER_EXP）——
- *  随机精英化的小怪不付钱：随机精英化最高占 26% 的生成量，按它发钱等于"按怪群规模发钱"
- *  （实测一整局 2428 点、够买 15 次，商店直接变清仓）。 */
-export const CREDIT = { elite: 3, boss: 26 };
+/** 信用点来源（阶段 B1 之后重排）：**四条途径，各管一件事** —— 只调一个汇率是治不了的。
+ *
+ *  | 来源 | 数值 | 它在设计里干什么 |
+ *  |---|---|---|
+ *  | 碎片（一份两用） | 每 60 点碎片经验 = 1 点 | 奖励"愿意冒险去捡"，与击杀效率挂钩 |
+ *  | **每击杀** | 0.10 / 杀 | 让清怪本身有收益，不再只靠掉落 |
+ *  | **波次结算** | `waveClear + wave × 0.8 + 收获` | **不看 DPS 的保底收入** —— 死亡螺旋就靠它破 |
+ *  | 精英 / 首领 | 6 / 45 | 可预期的"事件性收入" |
+ *
+ *  为什么必须加"波次结算"：把武器从升级搬到商店之后，DPS 起不来 → 击杀少 → 掉落少 →
+ *  更买不起武器，这是正反馈死亡螺旋（实测 8 局：时长 785s → 238s、收入 1698 → 58）。
+ *  一条**与 DPS 无关**的固定收入是唯一能打断它的东西。 */
+export const CREDIT = { elite: 8, boss: 60, perKill: 0.22, waveClear: 12, waveClearPerWave: 1.4 };
 
 /** 碎片一份两用（0.6.0 阶段 A）：Brotato 的"材料"**同时给经验与钱**（见
  *  `reference/土豆兄弟拆解.md §3.1`）—— 这样不存在"攒钱 vs 升级"的内耗，取舍全部落到商店。
@@ -535,7 +562,7 @@ export const CREDIT = { elite: 3, boss: 26 };
  *  判据（跑 20 局）：购买次数中位数 ≥ 8（已远超）、每次进店可负担 ≈ 1.5–2.5、结余占收入 < 25%。
  *  调参钩子：`__game.setEcon({ orbPerExp, shopEveryWaves })` 可在一次会话里扫参数，不必重载。
  *  见 `reference/土豆兄弟对照与0.6.0重排.md` §4 阶段 A。 */
-export const ORB_CREDIT_PER_EXP = 1 / 90;
+export const ORB_CREDIT_PER_EXP = 1 / 30;
 
 /** 商店价格（0.6.0 阶段 A）：**不再按"本局买过几次"涨价**。
  *  旧模型 `base × (1 + 买过次数 × 0.60)` 每买一次全场 +60% —— 第二次购买价格就翻倍，
@@ -625,7 +652,7 @@ export const RUN = {
   /* 开局信用点（阶段 B1 必须补的一环）：武器搬到商店之后，**开局 0 信用点就买不起第一把武器**，
      DPS 起不来 → 碎片（经验/钱）收入跟着崩 → 死循环。实测（8 局）：不补开局资金时
      一局只活到第 10 波、全程 1 把武器。给 80 点 = 第一波后就能买一把 T1 武器（45）。 */
-  startCredits: 80,
+  startCredits: 130,
   /* 武器槽位（阶段 B1）：开局 3 格，靠升级卡最多扩到 6。
      为什么从 3 起而不是直接 6：槽位本身要是一条**可投资的选择**（A4 的"升级给槽位"），
      开局就 6 格则这条选择不存在。 */
