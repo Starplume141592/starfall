@@ -35,13 +35,54 @@ export function mkName(level) {
 const L = lv => 1 + (lv - 1) * (4 / 6);
 const N = lv => Math.round(L(lv));
 
+/** 武器射程**档位规范**（2026-09-29 定）：射程不是随手填的数字，它是"这把武器在什么距离上交火"
+ *  的唯一表达 —— 玩家要能凭"贴身 / 近防 / 中距 / 远距"直接推理出该怎么用，所以必须有档位。
+ *
+ *  | 档 | 名称 | 名义距离 | 谁属于它 | 设计理由 |
+ *  |---|---|---|---|---|
+ *  | B0 | 贴身 | 52 | 等离子刃环 | 绕机体转 = 贴脸输出，风险与收益都最高 |
+ *  | B1 | 近距 | 95 | 卫戍无人机 | 环绕半径略大，用来挡贴脸的敌人 |
+ *  | B2 | 近防 | 190 | 近防霰弹 | 打不远，但扇面宽 |
+ *  | B3 | 中距 | 460 | 回旋切割器 | 出去再回来，覆盖中距 |
+ *  | B4 | 标准 | 540 | 链式电弧 · 纳米虫群 | 主力交火距离 |
+ *  | B5 | 远距 | 640 | 蜂群导弹 · 过载反应堆 | 追踪弹，站在远处输出 |
+ *  | B6 | 超远 | 760 | 粒子长矛 · 天基炮 | 屏外打击，代价是节奏慢 |
+ *  | BA | 全场 | 240 半径 | 电磁脉冲 | 不是"射程"而是 AOE 半径，单列一档 |
+ *
+ *  规则：**新武器必须落在某一档上**（不许出现"比 B4 远一点、比 B5 近一点"这种无档位数值）；
+ *  档位同时决定它在商店卡片上的标注（见 `weaponBand`），玩家因此能横向比较。 */
+export const WEAPON_BANDS = {
+  b0: { name: '贴身', value: 52 },
+  b1: { name: '近距', value: 95 },
+  b2: { name: '近防', value: 190 },
+  b3: { name: '中距', value: 460 },
+  b4: { name: '标准', value: 540 },
+  b5: { name: '远距', value: 640 },
+  b6: { name: '超远', value: 760 },
+  ba: { name: '全场', value: 240 }
+};
+/** 一把武器的射程档（用它的实际射程/半径/光束长度对档位取最近值） */
+export function weaponBand(def) {
+  /* 三种携带方式都要认：range（弹道/索敌）· radius（环绕/AOE）· len（光束）。
+     漏掉 len 会让"粒子长矛"被判成贴身武器（实测踩到过）。 */
+  const v = def.range !== undefined ? def.range
+    : (typeof def.radius === 'function' ? def.radius(7)
+      : (def.radius !== undefined ? def.radius : (def.len !== undefined ? def.len : 0)));
+  let best = 'b4', bd = 1e9;
+  for (const k in WEAPON_BANDS) {
+    const d = Math.abs(WEAPON_BANDS[k].value - v);
+    if (d < bd) { bd = d; best = k; }
+  }
+  return WEAPON_BANDS[best];
+}
+
 export const WEAPONS = {
   dart: {
     mode: 'shot', name: '蜂群导弹', icon: '🚀', color: '#63b3ff', maxLv: 7,
     dmg: lv => 22 + L(lv) * 12,
     cd: lv => Math.max(0.08, 0.30 - (L(lv) - 1) * 0.05),
     num: lv => 1 + N(lv),
-    bulletSpeed: 900, range: 620, bulletR: 3, spread: 0.12,
+    bulletSpeed: 900, range: 640, bulletR: 3, spread: 0.12,   // B5 远距
     pierce: lv => (lv >= 6 ? 2 : 0),
     home: 5.5,                        // 追踪转向速率（rad/s）：真·追踪，但转不紧急转弯
     desc: lv => `同时射出 ${1 + N(lv)} 枚**追踪**导弹，伤害 ${Math.round(22 + L(lv) * 12)}`
@@ -50,14 +91,14 @@ export const WEAPONS = {
     mode: 'orbit', name: '卫戍无人机', icon: '🛰️', color: '#7FD8FF', maxLv: 7,
     dmg: lv => 14 + L(lv) * 10,
     num: lv => 2 + N(lv) * 2,
-    radius: 85, spin: 3.0, hitR: 10, knock: 100,
+    radius: 95, spin: 3.0, hitR: 10, knock: 100,                 // B1 近距
     desc: lv => `机体周围环绕 ${2 + N(lv) * 2} 架无人机，单架伤害 ${Math.round(14 + L(lv) * 10)}`
   },
   saw: {
     mode: 'orbit', name: '等离子刃环', icon: '⚙️', color: '#B8F0FF', maxLv: 7,
     dmg: lv => 30 + L(lv) * 18,
     num: lv => 2 + Math.floor(L(lv) * 1.5),
-    radius: 52, spin: 6.5, hitR: 14, knock: 130,
+    radius: 52, spin: 6.5, hitR: 14, knock: 130,                  // B0 贴身
     desc: lv => `贴身旋转 ${2 + Math.floor(L(lv) * 1.5)} 片等离子刃，伤害 ${Math.round(30 + L(lv) * 18)}`
   },
   nova: {
@@ -72,7 +113,7 @@ export const WEAPONS = {
     dmg: lv => 16 + L(lv) * 12,
     cd: lv => Math.max(0.2, 0.9 - (L(lv) - 1) * 0.1),
     num: lv => 2 + Math.floor(L(lv) * 1.2),
-    range: 500,
+    range: 540,                                                     // B4 标准
     desc: lv => `同时打击最近 ${2 + Math.floor(L(lv) * 1.2)} 个目标，伤害 ${Math.round(16 + L(lv) * 12)}`
   },
   laser: {
@@ -80,7 +121,8 @@ export const WEAPONS = {
     dmg: lv => 30 + L(lv) * 16,
     cd: lv => Math.max(0.3, 1.2 - (L(lv) - 1) * 0.15),
     num: lv => (lv >= 5 ? 2 : 1),
-    len: 780, width: 6,
+    len: 760,                    // B6 超远
+    width: 6,
     desc: lv => `发射穿透粒子束${lv >= 5 ? '，双发' : ''}，伤害 ${Math.round(30 + L(lv) * 16)}`
   },
   boomerang: {
@@ -88,7 +130,7 @@ export const WEAPONS = {
     dmg: lv => 24 + L(lv) * 14,
     cd: lv => Math.max(0.5, 1.8 - (L(lv) - 1) * 0.22),
     num: lv => 1 + Math.floor(L(lv) / 2),
-    bulletSpeed: 620, bulletR: 8, range: 460,
+    bulletSpeed: 620, bulletR: 8, range: 460,               // B3 中距
     desc: lv => `投射 ${1 + Math.floor(L(lv) / 2)} 把回旋切割器，往返穿透，伤害 ${Math.round(24 + L(lv) * 14)}`
   },
 
@@ -98,7 +140,7 @@ export const WEAPONS = {
     dmg: lv => 70 + L(lv) * 40,
     cd: lv => Math.max(0.25, 0.85 - (L(lv) - 1) * 0.1),
     num: lv => 2 + N(lv),
-    bulletSpeed: 820, range: 640, bulletR: 5, spread: 0.05,
+    bulletSpeed: 820, range: 640, bulletR: 5, spread: 0.05,   // B5 远距
     pierce: () => 1,
     blast: 62,                        // 命中后的小范围爆炸半径（对周围敌人 45% 伤害）
     selfDps: lv => 1.2 + L(lv) * 0.3,
@@ -110,7 +152,7 @@ export const WEAPONS = {
     dmg: lv => 9 + L(lv) * 4,
     cd: lv => Math.max(0.12, 0.45 - (L(lv) - 1) * 0.07),
     num: lv => 3 + N(lv) * 2,
-    bulletSpeed: 950, range: 560, bulletR: 2, spread: 0.3,
+    bulletSpeed: 950, range: 540, bulletR: 2, spread: 0.3,    // B4 标准
     onKillHeal: lv => 1 + L(lv) * 0.6,
     tag: '代价',
     desc: lv => `${3 + N(lv) * 2} 只纳米虫，单只伤害仅 ${Math.round(9 + L(lv) * 4)}，命中附带减速（控场），每次击杀回复 ${(1 + L(lv) * 0.6).toFixed(1)} 生命（每秒最多回 5% 最大生命）`
@@ -120,7 +162,7 @@ export const WEAPONS = {
     dmg: lv => 34 + L(lv) * 20,
     cd: lv => Math.max(0.5, 1.5 - (L(lv) - 1) * 0.2),
     pellets: lv => 5 + N(lv),
-    bulletSpeed: 780, range: 180, bulletR: 3, spread: 0.8, knock: 7,
+    bulletSpeed: 780, range: 190, bulletR: 3, spread: 0.8, knock: 7,   // B2 近防
     tag: '代价',
     desc: lv => `扇形喷射 ${5 + N(lv)} 弹丸，单发 ${Math.round(34 + L(lv) * 20)}，射程极短但击退极强`
   },
@@ -133,7 +175,7 @@ export const WEAPONS = {
     cd: lv => Math.max(3.0, 6.6 - (L(lv) - 1) * 0.85),
     strikes: lv => (lv >= 7 ? 2 : 1),
     radius: lv => 92 + L(lv) * 13,
-    range: 720, telegraph: 0.85,
+    range: 760, telegraph: 0.85,                            // B6 超远
     desc: lv => `标记战场目标，0.85 秒后轨道打击落下：半径 ${Math.round(92 + L(lv) * 13)} 内 ${Math.round(130 + L(lv) * 95)} 伤害${lv >= 7 ? '（双重打击）' : ''}`
   }
 };
@@ -208,27 +250,27 @@ export const MODULES = [
   },
   {
     id: 'resonance', name: '共鸣矩阵', icon: '📡', maxLevel: 1,
-    desc: '每把**同类**武器使全局伤害 +12%（奖励专精一条线，而不是每样拿一把）',
+    desc: '每把**同类**武器使全局伤害 +18%（奖励专精一条线，而不是每样拿一把）',
     apply: () => {}
   },
   {
     id: 'storm', name: '磁暴弹头', icon: '🌩️', maxLevel: 1,
-    desc: '每 8 次命中引发一次电磁爆炸（让**单体武器也有清群手段**）',
+    desc: '每 6 次命中引发一次电磁爆炸（让**单体武器也有清群手段**）',
     apply: () => {}
   },
   {
     id: 'overload', name: '超载协议', icon: '⚡', maxLevel: 1,
-    desc: '攻击速度 +45%，但每秒自损 2 点生命（下限压到最大生命的 25%，不会自己耗死自己）',
-    apply: p => { p.atkSpd = (p.atkSpd || 0) + 0.45 }
+    desc: '攻击速度 +60%，但每秒自损 2.5 点生命（下限压到最大生命的 25%，不会自己耗死自己）',
+    apply: p => { p.atkSpd = (p.atkSpd || 0) + 0.60 }
   },
   {
     id: 'scavenger', name: '拾荒协议', icon: '🧲', maxLevel: 1,
-    desc: '残片信用点 ×2.5、经验 ×1.3（把"贪心去捡"变成一条真正的经济流派）',
+    desc: '残片信用点 ×3、经验 ×1.4（把"贪心去捡"变成一条真正的经济流派）',
     apply: () => {}
   },
   {
     id: 'aegis', name: '相位回路', icon: '🔵', maxLevel: 1,
-    desc: '获得相位护盾，且每 6 秒就能完全抵挡一次伤害（商品版是 10 秒且一局只能拿一次）',
+    desc: '获得相位护盾，且每 5 秒就能完全抵挡一次伤害',
     apply: p => { p.shield = true; p.shieldCd = 0 }
   }
 ];
@@ -564,6 +606,10 @@ export const ITEMS = [
   { id: 'storm_core', name: '磁暴核心', icon: '⛈️', tier: 4, base: 240, mech: 'chainkill', desc: '击杀时引发大范围爆炸（与"连锁反应"可叠加）' },
   { id: 'fortune', name: '命运骰子', icon: '🎲', tier: 4, base: 190, stats: { luck: 8 }, desc: '幸运 +8：商店更容易出现高品级商品' },
   { id: 'apex_core', name: '顶点核心', icon: '💠', tier: 4, base: 250, stats: { dmgMul: 0.45, crit: 0.10, atkSpd: 0.10 } },
+  /* 超频核心（阶段 B1.7）：**模组的主获得途径**。价格 420 是刻意定的 ——
+     它相当于一整段的收入，买它等于放弃那一段的其他所有选择。 */
+  { id: 'modcore', name: '超频核心', icon: '📡', tier: 4, base: 420, max: 3, flag: 'module',
+    desc: '立刻进行一次**超频跃迁**：四选一获得一个超频模组（一局最多 3 次）' },
   { id: 'aegis_drive', name: '永恒驱动', icon: '🔷', tier: 4, base: 235, stats: { dr: 0.10, regen: 1.2, maxHp: 40, speed: -15 } }
 ];
 
@@ -686,6 +732,11 @@ export const RUN = {
      而 Brotato 是 20 次 —— "决策密度"就是靠进店次数撑起来的，所以本节之内再补一次。
      2 → 一段 6 次（5 小铺 + 1 大铺），一局 18 次。设成 4 就退回旧节奏，便于两条都跑数据。 */
   shopEveryWaves: 2,
+  /* 超频模组的**免费保底**里程（阶段 B1.7）：9 → **15**。
+     用户："超频模组可以做很强，但获得方式变得没那么简单" —— 于是主获得途径改成
+     **商店里的传说商品「超频核心」（BROADCAST_CORE，base 420）**，里程只是非酋保底。
+     数值同时上调（见 MODULES）：稀有度换强度。 */
+  jumpEvery: 15,
   /* 开局信用点（阶段 B1 必须补的一环）：武器搬到商店之后，**开局 0 信用点就买不起第一把武器**，
      DPS 起不来 → 碎片（经验/钱）收入跟着崩 → 死循环。实测（8 局）：不补开局资金时
      一局只活到第 10 波、全程 1 把武器。给 80 点 = 第一波后就能买一把 T1 武器（45）。 */

@@ -7,14 +7,14 @@ import {
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
-  PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, ITEMS, STAT_KEYS, statsText, weaponClass, CREDIT, shopPriceOf,
+  PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, ITEMS, STAT_KEYS, statsText, weaponClass, weaponBand, CREDIT, shopPriceOf,
   ORB_CREDIT_PER_EXP, weaponLvOf, weaponTierName, WEAPON_TIER,
   VERSION, REPO_URL, ISSUE_URL, FEEDBACK_KINDS, FEEDBACK_MAIL,
   expNeed, mkName
 } from './config.js';
 
 /** 每升多少级触发一次「超频跃迁」四选一 */
-const JUMP_EVERY = 9;
+const JUMP_EVERY = RUN.jumpEvery || 9;   // 免费保底里程（见 RUN.jumpEvery 注释：主途径是商店的「超频核心」）
 /** 粒子/飘字上限：否则一颗战术弹（同帧命中数百敌人）会在单帧造出上千对象 */
 const MAX_PART = 700;
 const MAX_TEXT = 70;
@@ -201,6 +201,7 @@ const pauseTitleEl = document.getElementById('pauseTitle');
 const muteStateEl = document.getElementById('muteState');
 /* 意见收集的两个常驻入口：暂停面板里的按钮 + 战场右下角的常驻小按钮 */
 document.getElementById('fbPause').onclick = () => showFeedback();
+document.getElementById('statsOpen').onclick = () => showStats();   // 属性面板（不知道 TAB 的人也能进）
 document.getElementById('fbCorner').onclick = () => {
   if (G && G.over) return;              // 结算时用面板里的那个入口（这个按钮会被遮罩挡住）
   if (panelMode === 'ship') return;     // 开局菜单里也有自己的入口
@@ -399,8 +400,16 @@ window.addEventListener('keydown', e => {
   if (e.repeat) return;
   audio.unlock();                       // 浏览器要求首次用户操作后才能出声
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  if (e.code === 'Tab') {                        // 属性面板（随时可看）
+    e.preventDefault();
+    if (panelMode === 'stats') { closeStats(); return; }
+    /* 其它面板开着时不抢（否则会把商店/升级选择盖掉） */
+    if (!currentOptions && !panel._shipPick && panelMode === null && !shopOpen) showStats();
+    return;
+  }
   if (e.code === 'Escape') {
     if (panelMode === 'shop') { closeShop(); return; }
+    if (panelMode === 'stats') { closeStats(); return; }
     if (panelMode === 'feedback') { closePanel(); return; }
     if (panelMode === 'ship' || panelMode === 'meta') return;   // 开局菜单：ESC 没有"关闭"的语义
     if (!currentOptions) togglePause();
@@ -773,7 +782,7 @@ function hurtEnemy(e, dmg, kx, ky) {
   G.dmgAcc += real;                 // DPS 统计
   if (crit) fireMechs('onCrit', e, real);    // 机制：暴击触发（暴击新星等）
   /* 模组：磁暴弹头 —— 每 8 次命中触发一次小爆炸（让单体武器也有清群手段） */
-  if (player.mods && player.mods.storm && ++G.stormHits >= 8) {
+  if (player.mods && player.mods.storm && ++G.stormHits >= 6) {
     G.stormHits = 0;
     mechBlast(e.x, e.y, 55, 8 + G.wave * 1.6);
   }
@@ -890,7 +899,7 @@ function damagePlayer(dmg, src) {
   if (player.invuln > 0 || G.over) return;
   /* 相位护盾模组：每 10 秒完全抵挡一次（与卡面文案一致） */
   if (player.shield && player.shieldCd <= 0) {
-    player.shieldCd = (player.mods && player.mods.aegis) ? 6 : 10;
+    player.shieldCd = (player.mods && player.mods.aegis) ? 5 : 10;
     player.invuln = PLAYER.invuln;
     shake = Math.max(shake, 8);
     audio.shield();
@@ -1398,10 +1407,11 @@ function drawWeapon(beat, used) {
   used.add('w:' + id);
   const def = WEAPONS[id];
   const clsName = { melee: '近战', ranged: '远程', elem: '元素' }[weaponClass(def)] || '远程';
+  const band = weaponBand(def);       // 射程档位（规范见 config: WEAPON_BANDS）
   return {
     weapon: id, tier, name: def.name, icon: def.icon, icolor: def.color,
     base: WEAPON_TIER.price[tier],
-    desc: `【${clsName}】${def.desc(weaponLvOf(tier))}`
+    desc: `【${clsName} · ${band.name} ${band.value}】${def.desc(weaponLvOf(tier))}`
   };
 }
 
@@ -1481,6 +1491,17 @@ function buyItem(item, priceOverride) {
     case 'money': gainCredits(110, 'shop'); break;
     case 'slowfield': player.slowField = 0.7; break;
     case 'lockOrbs': for (const o of G.orbs) o.locked = true; break;
+    case 'module': {
+      /* 超频核心（阶段 B1.7）：模组的**主获得途径**。买下即开一次"超频跃迁"四选一。
+         先关店恢复游戏，再把 jumpPending 置上让升级面板以"跃迁"形态弹出（复用既有路径）。 */
+      shopOpen = false;
+      panelMode = null;
+      overlay.classList.remove('show');
+      syncPauseState();
+      player.jumpPending = true;
+      gainExp(Math.round(player.expNext));
+      return true;
+    }
     case 'levelup': {
       /* 不能在这里直接开升级面板（那会叠在商店之上、且商店仍是"打开"状态）。
          正确做法：先关店恢复游戏，再给经验让它自然触发升级面板。 */
@@ -1862,6 +1883,85 @@ function closePanel() {
 }
 
 /* ==================== 局外研发终端（#17） ==================== */
+/** 属性面板（TAB / 暂停面按钮）：把"这一局我到底变成了什么"一次性摊开。
+ *
+ *  为什么是**面板**而不是常驻 HUD：22 项属性常驻会吃掉半个屏幕，违反 ui-spec 的
+ *  "playfield first"（HUD 只允许一个主簇 + 一个次簇）。玩家真正的需求是
+ *  **想看的时候能一眼看全**，所以放进抽屉式的暂停面板，随时开、随时关。
+ *  只列"非默认值"，避免满屏 0 反而看不出重点。 */
+function showStats() {
+  G.paused = true;
+  currentOptions = null;
+  panel._shipPick = null;
+  panelMode = 'stats';
+  const p = player;
+  const pct = v => `${v >= 0 ? '+' : '−'}${Math.round(Math.abs(v) * 100)}%`;
+  const cell = (label, val, hot) => `<span class="st${hot ? ' hot' : ''}"><i>${label}</i><b>${val}</b></span>`;
+  const grp = (title, cells) => {
+    const body = cells.filter(Boolean).join('');
+    return body ? `<div class="st-grp"><h3>${title}</h3><div class="st-grid">${body}</div></div>` : '';
+  };
+  const nz = (v, f) => (v ? f(v) : null);       // 只显示非默认值
+
+  const alive = [
+    cell('生命', `${Math.round(p.hp)} / ${Math.round(p.maxHp)}`, p.hp / p.maxHp < 0.35),
+    nz(p.dr, v => cell('减伤', `${Math.round(v * 100)}%`)),
+    nz(p.dodge, v => cell('闪避', `${Math.round(v * 100)}%`)),
+    nz(p.regen, v => cell('每秒回复', v.toFixed(1))),
+    nz(p.killHealFlat, v => cell('击杀回复', v.toFixed(1))),
+    p.shield ? cell('相位护盾', '有') : null
+  ];
+  const dps = [
+    nz(p.dmgMul - 1, v => cell('通用伤害', pct(v))),
+    nz(p.meleeDmg, v => cell('近战伤害', pct(v))),
+    nz(p.rangedDmg, v => cell('远程伤害', pct(v))),
+    nz(p.elemDmg, v => cell('元素伤害', pct(v))),
+    nz(p.atkSpd, v => cell('攻击速度', pct(v))),
+    nz(p.crit, v => cell('暴击率', `${Math.round(v * 100)}%`)),
+    nz((p.critDmg || 2) - 2, v => cell('暴击伤害', `×${(2 + v).toFixed(2)}`)),
+    nz(p.rangeMul - 1, v => cell('武器射程', pct(v))),
+    nz((p.mechs && p.mechs.piercePlus) || 0, v => cell('额外穿透', `+${v}`))
+  ];
+  const econ = [
+    cell('拾取范围', Math.round(p.pickupRange)),
+    nz(p.orbPullMul - 1, v => cell('残片吸附', pct(v))),
+    nz(p.harvest, v => cell('收获', v)),
+    nz(p.luck, v => cell('幸运', v)),
+    nz(p.creditsPerKill, v => cell('每击杀', `${v.toFixed(2)} 信用点`)),
+    cell('本局收入', Math.round(G.creditsEarned)),
+    cell('本局花费', Math.round(G.shopSpent)),
+    cell('剩余', Math.round(p.credits))
+  ];
+  const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (p.slotUp || 0));
+  const weapons = p.weapons.map(w => {
+    const def = WEAPONS[w.id];
+    const band = weaponBand(def);
+    const cls = { melee: '近战', ranged: '远程', elem: '元素' }[weaponClass(def)] || '远程';
+    return cell(weaponTierName(w.tier), `${def.name}【${cls}·${band.name}】`);
+  });
+  const mechList = Object.keys(p.mechs || {}).map(id => (MECH_REGISTRY[id] ? MECH_REGISTRY[id].name : id));
+  const modList = MODULES.filter(m => p.mods[m.id]).map(m => m.name);
+
+  panel.innerHTML = `<h2>当前属性 // ${mkName(p.level)}</h2>
+    <p class="sub">存活 ${fmtTime(G.t)} · 第 ${G.wave} 波 · 击毁 ${p.kills} · 按 TAB 或 ESC 关闭</p>
+    ${grp('生存', alive)}
+    ${grp('输出', dps)}
+    ${grp('经济', econ)}
+    ${grp(`武器 ${p.weapons.length}/${slots} 槽`, weapons)}
+    ${mechList.length ? grp('机制（商品）', mechList.map(m => cell('◈', m))) : ''}
+    ${modList.length ? grp('超频模组', modList.map(m => cell('◆', m))) : ''}
+    <button class="btn alt" id="statsClose">返回战场<span class="hk">ESC</span></button>`;
+  overlay.classList.add('show');
+  document.getElementById('statsClose').onclick = closeStats;
+}
+
+/** 关掉属性面板（不推进任何进程 —— 它只是"看一眼"，不是流程的一部分） */
+function closeStats() {
+  overlay.classList.remove('show');
+  panelMode = null;
+  syncPauseState();
+}
+
 function showMeta() {
   G.paused = true;
   panel._shipPick = null;
@@ -1930,7 +2030,7 @@ function weaponDamage(def, lv, tier = 1) {
   let reson = 0;
   if (player.mods && player.mods.resonance) {
     const cls = weaponClass(def);
-    reson = 0.12 * player.weapons.filter(x => weaponClass(WEAPONS[x.id]) === cls).length;
+    reson = 0.18 * player.weapons.filter(x => weaponClass(WEAPONS[x.id]) === cls).length;
   }
   return def.dmg(lv) * tierMul * (player.dmgMul + classBonus + reson) * (1 + standBonus + vendBonus);
 }
@@ -3082,7 +3182,7 @@ function update(dt) {
           mechPing(player.x, player.y - 46, PALETTE.elite, '残片共振 +4%');
         }
       }
-      G.creditAcc += o.val * ECON.orbPerExp * ((player.mods && player.mods.scavenger) ? 2.5 : 1);
+      G.creditAcc += o.val * ECON.orbPerExp * ((player.mods && player.mods.scavenger) ? 3 : 1);
       const credit = Math.floor(G.creditAcc);
       if (credit > 0) { G.creditAcc -= credit; gainCredits(credit, 'orb'); }
       audio.pickup();

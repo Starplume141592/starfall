@@ -861,3 +861,26 @@ body.mobile #cornerbar > button { padding: 8px 12px; font-size: 12px; }
   75%      { transform: translateX(3px); }
 }
 .card.shop.lock-full { animation: lockDeny 0.32s ease-in-out; border-color: rgba(255, 176, 32, 0.55) !important; }
+
+/* ---------- 属性面板（TAB，2026-09-29）----------
+   22 项属性不能常驻 HUD（违反 playfield first），所以放进抽屉式面板。
+   版式用"分组 + 键值网格"而不是表格：属性名长短不一，表格会有大量空列；
+   网格让每项都是等宽单元，扫读时视线只在一个方向上移动。 */
+#panel:has(.st-grp) { min-width: 620px; max-width: 860px; }
+.st-grp { margin: 14px 0 4px; text-align: left; }
+.st-grp h3 {
+  margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.22em;
+  color: #8FB0CF; opacity: 0.85;
+}
+.st-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 10px; }
+.st {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 5px 8px; border-radius: 4px;
+  background: rgba(143, 176, 207, 0.05);
+  border: 1px solid rgba(143, 176, 207, 0.10);
+}
+.st i { font-style: normal; font-size: 11px; color: #7f9fbe; letter-spacing: 0.04em; }
+.st b { font-size: 13px; color: #D6E8FF; font-variant-numeric: tabular-nums; }
+/* 只给"需要立刻注意"的一项上色：生命偏低（危险语义色） */
+.st.hot { border-color: rgba(255, 176, 32, 0.42); background: rgba(255, 176, 32, 0.08); }
+.st.hot b { color: #FFB020; }
