@@ -7,7 +7,7 @@ import {
   ELITE_BURST, ELITE_DROP_CHEST, CHEST_MAGNET_RANGE, PALETTE,
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
-  PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, SHOP_ITEMS, CREDIT, shopPriceOf,
+  PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, ITEMS, STAT_KEYS, statsText, weaponClass, CREDIT, shopPriceOf,
   ORB_CREDIT_PER_EXP,
   VERSION, REPO_URL, ISSUE_URL, FEEDBACK_KINDS, FEEDBACK_MAIL,
   expNeed, mkName
@@ -305,6 +305,10 @@ function reset() {
     speed: PLAYER_SPEED * (ship.speedMul || 1),
     hp: (ship.hp || PLAYER.hp) + mb.hp, maxHp: (ship.hp || PLAYER.hp) + mb.hp,
     dr: ship.dr || 0, crit: PLAYER.crit + (ship.crit || 0),
+    /* 属性矩阵（阶段 A2）：商品与升级卡都是往这些字段上加减。
+       critDmg 默认 2.0（暴击倍率）、rangeMul 默认 1（射程倍率）—— 其余都是 0 起步的加项。 */
+    critDmg: PLAYER.critDmg || 2.0, dodge: 0, atkSpd: 0, rangeMul: 1,
+    meleeDmg: 0, rangedDmg: 0, elemDmg: 0, harvest: 0, luck: 0, creditsPerKill: 0,
     level: 1, exp: 0, expNext: expNeed(1),
     pickupRange: (ship.pick || PLAYER.pickupRange) + mb.pick,
     dmgMul: (ship.dmgMul || PLAYER.dmgMul) + mb.dmgMul,
@@ -331,7 +335,7 @@ function reset() {
     /* 经济观测项（0.6.0 阶段 A）："钱从哪来、够不够花"必须可读数 —— 判据
        （≥40% 的进店存在真实取舍、一局购买次数中位数 ≥8）就是靠这些数跑出来的，不靠体感。
        squeezed = 进店时"买得起至少 1 件、但买不起全部"的次数：**那才叫决策**。 */
-    creditsEarned: 0, creditsBySource: {}, creditAcc: 0,
+    creditsEarned: 0, creditsBySource: {}, creditAcc: 0, killCreditAcc: 0,
     orbsCollected: 0, expFromOrbs: 0,
     shopVisits: 0, shopVisitsSqueezed: 0, shopVisitsBroke: 0, shopAffordTotal: 0,
     shopBuys: 0, shopSpent: 0, shopRerolls: 0, shopLocks: 0,
@@ -737,7 +741,7 @@ function hurtEnemy(e, dmg, kx, ky) {
   if (e.dead) return;
   const crit = Math.random() < player.crit;
   const mul = e.vulnMul || 1;
-  const real = (crit ? dmg * 2 : dmg) * mul;
+  const real = (crit ? dmg * (player.critDmg || 2) : dmg) * mul;
   e.hp -= real;
   e.kx += kx || 0; e.ky += ky || 0;
   e.flash = 0.09;
@@ -762,6 +766,14 @@ function hurtEnemy(e, dmg, kx, ky) {
        精英波的怪带上 paysCredit 标记，钱因此是"可预期的事件奖励"。 */
     if (e.boss) { gainCredits(CREDIT.boss, 'boss'); addText(e.x, e.y - 34, `+${CREDIT.boss} 信用点`, '#FFD166', 18); }
     else if (e.paysCredit) { gainCredits(CREDIT.elite, 'elite'); addText(e.x, e.y - 30, `+${CREDIT.elite} 信用点`, '#FFD166', 14); }
+
+    /* 「每击杀信用点」（贪婪核心）：小数累加、取整发放 —— 一局几千次击杀，
+        按 1 点/杀直接给会把一局收入翻倍；0.15/杀 ≈ 一局 +300，才是"值得买但不到崩盘"。 */
+    if (player.creditsPerKill) {
+      G.killCreditAcc += player.creditsPerKill;
+      const c = Math.floor(G.killCreditAcc);
+      if (c > 0) { G.killCreditAcc -= c; gainCredits(c, 'kill'); }
+    }
 
     /* 击杀回复（纳米虫群 + 噬能涂层）—— 每秒最多回 5% 最大生命，
        否则后期每秒几十杀会变成无敌。所有吸血途径都必须汇进这一条限速里。 */
@@ -852,6 +864,13 @@ function damagePlayer(dmg, src) {
   }
   /* 开局伤害宽限：0 秒时 45%，120 秒后拉满（防止开局被围住 5 秒直接暴毙） */
   const grace = Math.min(1, 0.45 + G.t / 120);
+  /* 闪避（属性矩阵）：判定在减伤之前，命中不了就完全不掉血。
+     给上限 0.60 —— 闪避是"免伤概率"，堆到 100% 等于无敌（Brotato 也用封顶处理）。 */
+  if (player.dodge > 0 && Math.random() < Math.min(0.60, player.dodge)) {
+    player.invuln = PLAYER.invuln * 0.5;
+    addText(player.x, player.y - 26, '闪避', '#a8e6cf', 16);
+    return;
+  }
   const real = Math.max(1, dmg * grace * (1 - player.dr));
   player.hp -= real;
   if (src) G.dmgTaken[src] = (G.dmgTaken[src] || 0) + real;    // 调试：伤害来源统计
@@ -1150,27 +1169,104 @@ const ECON = { orbPerExp: ORB_CREDIT_PER_EXP, shopEveryWaves: RUN.shopEveryWaves
 /** 信用点的唯一入口（与 fireBullet / fireAllyBullet 同样的理由：曾经散落多处、后来收敛）。
  *  它同时记账：`creditsBySource` 是阶段 A 判据的原始数据 —— "钱从哪来、够不够花"必须可读数，
  *  否则调价格只能靠猜。 */
-function gainCredits(n, source) {  if (!n) return 0;
+function gainCredits(n, source) {
+  if (!n) return 0;
   player.credits += n;
   G.creditsEarned += n;
   G.creditsBySource[source] = (G.creditsBySource[source] || 0) + n;
   return n;
 }
 
+/* ==================== 属性矩阵 + 商品池（阶段 A2） ==================== */
+/** 通用属性应用器：**商品与升级卡都走这里** —— 加商品只需要在 config 的 ITEMS 里加一行数据，
+ *  不必再写一段代码。特例（回复 / 护盾 / 升级 / 吸残片 / 立刻给钱）靠 `flag` 分流，见 buyItem。 */
+function applyStats(p, stats) {
+  for (const k in stats) {
+    const v = stats[k];
+    switch (k) {
+      case 'pctMaxHp': {                     // 按比例加减（后期不贬值）
+        const d = Math.round(p.maxHp * v);
+        p.maxHp = Math.max(40, p.maxHp + d);
+        p.hp = Math.min(p.maxHp, p.hp + Math.max(0, d));
+        break;
+      }
+      case 'hpNow': p.hp = Math.min(p.maxHp, p.hp + v); break;
+      case 'maxHp':
+        p.maxHp = Math.max(40, p.maxHp + v);
+        p.hp = Math.min(p.maxHp, p.hp + Math.max(0, v));
+        break;
+      case 'dr': p.dr = Math.max(0, Math.min(0.60, p.dr + v)); break;         // 减伤封顶 60%
+      case 'crit': p.crit = Math.max(0, Math.min(1, p.crit + v)); break;
+      case 'dodge': p.dodge = Math.max(0, p.dodge + v); break;
+      case 'rangeMul': p.rangeMul = Math.max(0.3, p.rangeMul + v); break;
+      case 'speed': p.speed = Math.max(120, p.speed + v); break;
+      default: p[k] = (p[k] || 0) + v;
+    }
+  }
+}
+
+/** 品级抽取（阶段 A2）：按**小节**逐级解锁，越往后越容易出高品级；幸运提高高档权重。
+ *  形状参考 Brotato（T2 从第 2 波、T3 从第 4、T4 从第 8，带每波增量与上限），缩放到我们 9 个小节。 */
+function drawTier(beat) {
+  const luck = 1 + (player.luck || 0) * 0.03;                  // 幸运：每点 +3% 高档权重
+  const w4 = beat >= 6 ? Math.min(0.08, (beat - 5) * 0.012) * luck : 0;
+  const w3 = beat >= 3 ? Math.min(0.28, (beat - 2) * 0.045) * luck : 0;
+  const w2 = beat >= 1 ? Math.min(0.60, beat * 0.11) * luck : 0;
+  const r = Math.random();
+  if (r < w4) return 4;
+  if (r < w4 + w3) return 3;
+  if (r < w4 + w3 + w2) return 2;
+  return 1;
+}
+
+/** 货架抽取：n 件、**同店不重复**、尊重每局上限 `max`。
+ *  抽到的品级若已抽空（该档全被 limit 挡住）就**向下降一级**兜底 —— 保证货架永远是满的。 */
+function drawStock(n) {
+  const beat = Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat);
+  const stock = [];
+  const used = new Set();
+  for (let i = 0; i < n; i++) {
+    let cands = [];
+    for (let t = drawTier(beat); t >= 1 && !cands.length; t--) {
+      cands = ITEMS.filter(it => it.tier === t
+        && !used.has(it.id)
+        && (it.max === undefined || it.max < 0 || (player.shopBought[it.id] || 0) < it.max)
+        && !(it.flag === 'shield' && player.shield));
+    }
+    if (!cands.length) break;
+    const pick = cands[Math.floor(Math.random() * cands.length)];
+    used.add(pick.id);
+    stock.push(pick);
+  }
+  return stock;
+}
+
+/** 能不能买：**一处判定** —— 面板高亮 / 进店记账 / sim 机器人三处共用。
+ *  上限 `max` 与"已拥有即不再出现"（护盾）都在这里，避免三处各写一遍然后走偏。 */
+function canBuy(it) {
+  if (player.credits < shopPrice(it)) return false;
+  if (it.max !== undefined && it.max >= 0 && (player.shopBought[it.id] || 0) >= it.max) return false;
+  if (it.flag === 'shield' && player.shield) return false;
+  return true;
+}
+
 function buyItem(item) {
   const price = shopPrice(item);
   if (player.credits < price) { audio.hurt(); return false; }
-  if (item.once && player.shopBought[item.id]) return false;
+  if (item.max !== undefined && item.max >= 0 && (player.shopBought[item.id] || 0) >= item.max) return false;
   player.credits -= price;
   player.shopBought[item.id] = (player.shopBought[item.id] || 0) + 1;
   player.shopCount = (player.shopCount || 0) + 1;
   G.shopBuys++; G.shopSpent += price;
-  switch (item.id) {
-    case 'repair': player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.4); break;
-    case 'plate': player.maxHp += 40; player.hp += 40; break;
-    case 'calib': player.dmgMul += 0.08; break;
-    case 'coolant': player.cdMul *= 0.94; break;
-    case 'inject': {
+
+  if (item.stats) applyStats(player, item.stats);
+  switch (item.flag) {
+    case 'heal40': player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.4); break;
+    case 'shield': player.shield = true; player.shieldCd = 0; break;
+    case 'money': gainCredits(110, 'shop'); break;
+    case 'slowfield': player.slowField = 0.7; break;
+    case 'lockOrbs': for (const o of G.orbs) o.locked = true; break;
+    case 'levelup': {
       /* 不能在这里直接开升级面板（那会叠在商店之上、且商店仍是"打开"状态）。
          正确做法：先关店恢复游戏，再给经验让它自然触发升级面板。 */
       shopOpen = false;
@@ -1180,7 +1276,6 @@ function buyItem(item) {
       gainExp(Math.round(player.expNext));
       return true;
     }
-    case 'shield': player.shield = true; player.shieldCd = 0; break;
   }
   audio.pickup();
   addText(player.x, player.y - 40, item.name, PALETTE.allyBeam, 16);
@@ -1231,13 +1326,13 @@ function showShop(kind) {
   /* 货架：小铺从现有 6 件里随机抽 RUN.smallShopItems 件（"这次进店有什么"本身是信息），
      大铺全上。分类商品池是阶段 1 的事 —— 阶段 0 先证明"两种规格的节奏"成立。 */
   const n = isBig ? RUN.bigShopItems : RUN.smallShopItems;
-  shopStock = SHOP_ITEMS.slice().sort(() => Math.random() - 0.5).slice(0, n);
+  shopStock = drawStock(n);
   /* 进店记一次账（每买一件都会重绘面板，所以用标志位保证"一次进店只记一次"）。
      squeezed = 买得起至少 1 件、但买不起全部 —— 那才叫决策；broke = 一件也买不起。
      判据（重排稿 §4 阶段 A）：squeezed 占比 ≥40%、broke 占比要低。 */
   if (!G.shopVisitCounted) {
     G.shopVisitCounted = true;
-    const afford = shopStock.filter(it => player.credits >= shopPrice(it) && !(it.once && player.shopBought[it.id])).length;
+    const afford = shopStock.filter(it => canBuy(it)).length;
     G.shopVisits++;
     G.shopAffordTotal += afford;
     if (afford === 0) G.shopVisitsBroke++;
@@ -1245,13 +1340,16 @@ function showShop(kind) {
   }
   const rows = shopStock.map(it => {
     const price = shopPrice(it);
-    const owned = it.once && player.shopBought[it.id];
-    const afford = player.credits >= price && !owned;
+    /* 上限（`max`）与护盾这类"已拥有就不再出现"的特例：买满即显示"已满" */
+    const bought = player.shopBought[it.id] || 0;
+    const full = (it.max !== undefined && it.max >= 0 && bought >= it.max) || (it.flag === 'shield' && player.shield);
+    const afford = player.credits >= price && !full;
+    const left = (it.max !== undefined && it.max >= 0) ? ` · 上限 ${it.max}` : '';
     return `<div class="card shop${afford ? '' : ' off'}" data-item="${it.id}">
       <div class="ic">${iconFor(it.id, '#FFD166', it.icon)}</div>
-      <div class="nm">${it.name}</div>
-      <div class="lv">${owned ? '已装备' : price + ' 信用点'}</div>
-      <div class="ds">${it.desc}</div>
+      <div class="nm">${it.name}<span class="tier t${it.tier}">T${it.tier}</span></div>
+      <div class="lv">${full ? '已满' : price + ' 信用点'}${left}</div>
+      <div class="ds">${it.desc || statsText(it.stats || {})}</div>
     </div>`;
   }).join('');
   const title = isBig ? '补给终端 · 整备' : '补给终端 · 前哨';
@@ -1499,19 +1597,39 @@ function nearestEnemies(n, maxDist) {
   return arr.slice(0, n).map(o => o.e);
 }
 
+/** 武器伤害的唯一入口（属性矩阵落地在**这里**，不在 7 处开火分支里）。
+ *  Brotato 式的"武器吃不同属性"：通用伤害（dmgMul）+ 该武器类别的专属伤害
+ *  （melee/ranged/elem，由 mode 归类）。所以"投哪项属性"取决于你拿了哪类武器。 */
+function weaponDamage(def, lv) {
+  const cls = weaponClass(def);
+  const classBonus = cls === 'melee' ? (player.meleeDmg || 0)
+    : cls === 'elem' ? (player.elemDmg || 0) : (player.rangedDmg || 0);
+  return def.dmg(lv) * (player.dmgMul + classBonus);
+}
+
+/** 武器冷却的唯一入口（原来 `def.cd(lv) * player.cdMul` 散落在 7 处 —— 攻击速度必须只在这里生效） */
+function weaponCooldown(def, lv) {
+  return def.cd(lv) * player.cdMul / (1 + (player.atkSpd || 0));
+}
+
+/** 武器射程（含射程加成）—— 索敌与弹体寿命都用它，避免两处口径不一致 */
+function effectiveRange(def) {
+  return def.range * (player.rangeMul || 1);
+}
+
 function updateWeapons(dt) {
   for (const w of player.weapons) {
     const def = WEAPONS[w.id];
-    const dmg = def.dmg(w.lv) * player.dmgMul;
+    const dmg = weaponDamage(def, w.lv);
 
     /* 追踪弹族（蜂群导弹 / 过载反应堆 / 纳米虫群）：同时多发，锁定最近的敌人 */
     if (def.mode === 'shot') {
       w.t -= dt;
       if (w.t <= 0) {
         const numShots = def.num(w.lv);
-        const tgts = nearestEnemies(numShots, def.range);   // 按射程索敌：够不着的目标不开火，别浪费这一发
+        const tgts = nearestEnemies(numShots, effectiveRange(def));   // 按射程索敌：够不着的目标不开火，别浪费这一发
         if (tgts.length) {
-          w.t = def.cd(w.lv) * player.cdMul;
+          w.t = weaponCooldown(def, w.lv);
           audio.shoot();
           for (let i = 0; i < numShots; i++) {
             const t = tgts[i % tgts.length];
@@ -1521,7 +1639,7 @@ function updateWeapons(dt) {
               vx: Math.cos(a) * def.bulletSpeed, vy: Math.sin(a) * def.bulletSpeed,
               r: def.bulletR, dmg, pierce: def.pierce ? def.pierce(w.lv) : 0, hit: new Set(),
               home: def.home || 0, blast: def.blast || 0,
-              life: bulletLife(def), color: def.color, weapon: w.id
+              life: bulletLife(Object.assign({}, def, { range: effectiveRange(def) })), color: def.color, weapon: w.id
             });
           }
         } else w.t = 0.08;
@@ -1532,9 +1650,9 @@ function updateWeapons(dt) {
     else if (def.mode === 'orbital') {
       w.t -= dt;
       if (w.t <= 0) {
-        const tgts = nearestEnemies(def.strikes(w.lv), def.range);
+        const tgts = nearestEnemies(def.strikes(w.lv), effectiveRange(def));
         if (tgts.length) {
-          w.t = def.cd(w.lv) * player.cdMul;
+          w.t = weaponCooldown(def, w.lv);
           audio.warn();
           for (const t of tgts) {
             /* 落点按"目标正朝玩家移动"的已知行为做前置于 0.85 秒：既让这一发真的能打中，
@@ -1560,9 +1678,9 @@ function updateWeapons(dt) {
     else if (def.mode === 'flak') {
       w.t -= dt;
       if (w.t <= 0) {
-        const tgts = nearestEnemies(1, def.range);
+        const tgts = nearestEnemies(1, effectiveRange(def));
         if (tgts.length) {
-          w.t = def.cd(w.lv) * player.cdMul;
+          w.t = weaponCooldown(def, w.lv);
           audio.shoot();
           const t = tgts[0];
           const baseA = Math.atan2(t.y - player.y, t.x - player.x);
@@ -1574,7 +1692,7 @@ function updateWeapons(dt) {
               type: 'dart', x: player.x, y: player.y,
               vx: Math.cos(a) * def.bulletSpeed, vy: Math.sin(a) * def.bulletSpeed,
               r: def.bulletR, dmg, pierce: 0, hit: new Set(),
-              life: bulletLife(def), color: def.color, weapon: w.id, knock: def.knock
+              life: bulletLife(Object.assign({}, def, { range: effectiveRange(def) })), color: def.color, weapon: w.id, knock: def.knock
             });
           }
           shake = Math.max(shake, 4);
@@ -1626,9 +1744,9 @@ function updateWeapons(dt) {
     else if (def.mode === 'chain') {
       w.t -= dt;
       if (w.t <= 0) {
-        const tgts = nearestEnemies(def.num(w.lv), def.range);
+        const tgts = nearestEnemies(def.num(w.lv), effectiveRange(def));
         if (tgts.length) {
-          w.t = def.cd(w.lv) * player.cdMul;
+          w.t = weaponCooldown(def, w.lv);
           for (const t of tgts) {
             G.bolts.push({ x1: player.x, y1: player.y, x2: t.x, y2: t.y, life: 0.15, color: def.color });
             hurtEnemy(t, dmg, 0, 0);
@@ -1643,7 +1761,7 @@ function updateWeapons(dt) {
       if (w.t <= 0) {
         const tgts = nearestEnemies(def.num(w.lv), def.len);   // 光束有多长就锁多远
         if (tgts.length) {
-          w.t = def.cd(w.lv) * player.cdMul;
+          w.t = weaponCooldown(def, w.lv);
           for (const t of tgts) {
             const a = Math.atan2(t.y - player.y, t.x - player.x);
             G.beams.push({ x: player.x, y: player.y, angle: a, len: def.len, life: 0.22, maxLife: 0.22, color: def.color });
@@ -1664,9 +1782,9 @@ function updateWeapons(dt) {
     else if (def.mode === 'boomerang') {
       w.t -= dt;
       if (w.t <= 0) {
-        const tgts = nearestEnemies(def.num(w.lv), def.range);   // 回旋镖：索敌半径 = 射程
+        const tgts = nearestEnemies(def.num(w.lv), effectiveRange(def));   // 回旋镖：索敌半径 = 射程
         if (tgts.length) {
-          w.t = def.cd(w.lv) * player.cdMul;
+          w.t = weaponCooldown(def, w.lv);
           for (const t of tgts) {
             fireAllyBullet({
               type: 'boomerang',
@@ -2945,7 +3063,7 @@ function sim(seconds, opts) {
       if (o.shop !== false) {
         for (let k = 0; k < 8; k++) {
           if (panelMode !== 'shop') break;              // '数据注入' 会自己关店去弹升级面板
-          const it = shopStock.find(x => player.credits >= shopPrice(x) && !(x.once && player.shopBought[x.id]));
+          const it = shopStock.find(x => canBuy(x));
           if (!it) break;
           if (!buyItem(it)) break;
         }

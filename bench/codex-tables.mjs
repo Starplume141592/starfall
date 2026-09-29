@@ -70,10 +70,14 @@ if (want('econ')) {
   line('经济：XP / 商店 / 局外存档 / 永久强化');
   console.log('  expNeed(lv) = floor(11 + lv*4.2 + lv^2*0.52)');
   for (const lv of [1, 5, 10, 20, 30, 40, 50, 60, 70]) console.log(`    lv${String(lv).padStart(2)} → ${Math.round(cfg.expNeed(lv))}`);
-  console.log(`\n  局内商店（SHOP_ITEMS，价格随**小节**上涨：SHOP_PRICE=${JSON.stringify(cfg.SHOP_PRICE)}，一局 ${cfg.RUN.stages * cfg.RUN.beatsPerStage} 小节）`);
-  for (const it of cfg.SHOP_ITEMS) {
-    const p = b => cfg.shopPriceOf(it.base, b);
-    console.log(`    ${it.id.padEnd(8)} ${it.name.padEnd(6)} base=${String(it.base).padStart(3)}  第1..9小节 = ${[0, 1, 2, 3, 4, 5, 6, 7, 8].map(p).join(' / ')}  ${it.once ? '（一局一次）' : ''}`);
+  console.log(`\n  局内商店（ITEMS 商品池，价格随**小节**上涨：SHOP_PRICE=${JSON.stringify(cfg.SHOP_PRICE)}，一局 ${cfg.RUN.stages * cfg.RUN.beatsPerStage} 小节）`);
+  const byTier = {};
+  for (const it of cfg.ITEMS) (byTier[it.tier] = byTier[it.tier] || []).push(it);
+  for (const t of Object.keys(byTier).sort()) {
+    const list = byTier[t];
+    const prices = list.map(i => i.base);
+    console.log(`    ── T${t}：${list.length} 件 · 基准价 ${Math.min(...prices)}–${Math.max(...prices)}`);
+    for (const it of list) console.log(`       ${it.name.padEnd(6)} ${String(it.base).padStart(3)}  ${it.desc || cfg.statsText(it.stats || {})}`);
   }
   console.log(`\n  信用点来源 CREDIT ${JSON.stringify(cfg.CREDIT)}（精英波与首领）+ 事件奖励 + **碎片一份两用**（每 ${(1 / cfg.ORB_CREDIT_PER_EXP).toFixed(0)} 点碎片经验 = 1 信用点）`);
   console.log(`  局外结算 = floor(存活秒/12 + 波次*2 + 击毁/120)`);

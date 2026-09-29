@@ -504,6 +504,14 @@ body.mobile #zoomToast { top: 46px; font-size: 11px; }
 .card.shop.off:hover, .card.meta.off:hover { transform: none; border-color: rgba(120, 160, 200, 0.3); }
 .card.meta.on { border-color: #58a6ff; }
 .card.meta.on::before { background: #58a6ff; }
+/* 商品品级角标（0.6.0 阶段 A2）：只用品级语义色 —— T1/T2 走遥测色（不抢注意力），
+   T3/T4 用"稀有"语义色 #F0E442。同带内的区分靠**字符**（T1..T4），不靠新颜色。 */
+.card.shop .nm .tier {
+  margin-left: 6px; padding: 1px 5px; font-size: 10px; letter-spacing: 0.08em;
+  color: #8FB0CF; border: 1px solid rgba(143, 176, 207, 0.35); border-radius: 3px;
+  background: rgba(143, 176, 207, 0.08); vertical-align: 2px;
+}
+.card.shop .nm .tier:is(.t3, .t4) { color: #F0E442; border-color: rgba(240, 228, 66, 0.4); background: rgba(240, 228, 66, 0.10); }
 #panel p.sub.credit { color: #FFD166; }
 
 /* 结算面板整体居中一点 */

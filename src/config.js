@@ -207,7 +207,56 @@ export const MODULES = [
   }
 ];
 
-/** 池子抽干后的保底选项在 game.js 里构造（需要用到 gainExp 等游戏函数） */
+/** 武器"吃哪一类属性"（Brotato 式 scaling 的简化版）。
+ *  Brotato 里每把武器自己声明 `scaling_stats`；我们只有 11 把武器，按 mode 归类即可 ——
+ *  这样"我该投哪项属性"变成一个真实的构筑问题，而不是所有人都堆同一个 dmgMul。
+ *  melee 贴身（刃环/无人机/回旋）· ranged 弹道（导弹/霰弹/长矛）· elem 能量（脉冲/电弧/天基炮） */
+export const WEAPON_CLASS = {
+  orbit: 'melee', boomerang: 'melee',
+  shot: 'ranged', flak: 'ranged', laser: 'ranged',
+  nova: 'elem', chain: 'elem', orbital: 'elem'
+};
+export const weaponClass = def => WEAPON_CLASS[def.mode] || 'ranged';
+
+/** 属性语义表（0.6.0 阶段 A2）：**商品与升级卡都是"属性组合"**。
+ *  Brotato 的 241 件道具就是 20+ 项属性的增减组合 —— 有了这张表，加商品只是加数据行，
+ *  不需要再加代码。`kind` 决定它在 HUD/描述里怎么显示，`apply` 之外的特例一律走 game.js。 */
+export const STAT_KEYS = {
+  dmgMul: { name: '伤害', pct: true },
+  meleeDmg: { name: '近战伤害', pct: true },
+  rangedDmg: { name: '远程伤害', pct: true },
+  elemDmg: { name: '元素伤害', pct: true },
+  atkSpd: { name: '攻击速度', pct: true },
+  crit: { name: '暴击率', pct: true },
+  critDmg: { name: '暴击伤害', pct: true },
+  maxHp: { name: '最大生命', pct: false },
+  pctMaxHp: { name: '最大生命', pct: true },      // 按比例加减（后期不贬值）
+  hpNow: { name: '立即回复', pct: false },
+  dr: { name: '减伤', pct: true },
+  dodge: { name: '闪避', pct: true },
+  regen: { name: '每秒回复', pct: false },
+  killHealFlat: { name: '击杀回复', pct: false },
+  speed: { name: '移动速度', pct: false },
+  pickupRange: { name: '拾取范围', pct: false },
+  rangeMul: { name: '武器射程', pct: true },
+  harvest: { name: '收获', pct: false },
+  luck: { name: '幸运', pct: false },
+  credits: { name: '信用点', pct: false },
+  creditsPerKill: { name: '每击杀信用点', pct: false },
+  orbPullMul: { name: '残片吸附', pct: true }
+};
+
+/** 属性增减 → 一句话描述（商品描述自动生成，避免手写文案与数值走偏） */
+export function statsText(stats) {
+  return Object.keys(stats).map(k => {
+    const def = STAT_KEYS[k] || { name: k, pct: false };
+    const v = stats[k];
+    const sign = v >= 0 ? '+' : '−';
+    const num = def.pct ? Math.round(Math.abs(v) * 100) + '%' : Math.abs(v);
+    return `${def.name} ${sign}${num}`;
+  }).join(' · ');
+}
+
 
 /**
  * 敌方成长曲线（核心平衡旋钮）
@@ -389,14 +438,56 @@ export const META_UPGRADES = [
  * 价格随"本局买过几次"上涨，所以它是一局内的资源分配题，而不是无脑刷。
  * `once: true` 的项一局只能买一次（否则护盾叠满就没难度了）。
  */
-export const SHOP_ITEMS = [
-  { id: 'repair', name: '应急维修', icon: '🧰', base: 25, desc: '立刻回复 40% 最大生命' },
-  { id: 'plate', name: '附加装甲', icon: '🛡️', base: 35, desc: '最大生命 +40，并回复等量' },
-  { id: 'calib', name: '火力校准', icon: '🔥', base: 45, desc: '本局伤害 +8%' },
-  { id: 'coolant', name: '循环冷却', icon: '⏱️', base: 45, desc: '本局武器冷却 -6%' },
-  { id: 'inject', name: '数据注入', icon: '💠', base: 50, desc: '立刻获得 1 级经验（会触发升级面板）' },
-  { id: 'shield', name: '相位发生器', icon: '🔵', base: 70, once: true, desc: '获得相位护盾：每 10 秒完全抵挡一次伤害' }
+/** 商品池（0.6.0 阶段 A2）：**商品是「属性组合」，不是手写行为** —— 这是"几十上百种"能成立的原因。
+ *
+ *  字段：`tier` 稀有度 1–4 · `base` 基准价（实际售价见 `shopPriceOf`）· `max` 每局上限（-1 无限）
+ *        · `stats` 属性增减（键来自 `STAT_KEYS`）· `flag` 走 game.js 的特例 · `desc` 可选（缺省由 stats 自动生成）
+ *
+ *  品级解锁（按小节）：T1 第 1 小节起 · T2 第 2 起 · T3 第 4 起 · T4 第 7 起（权重见 game.js `drawTier`）。
+ *  **负面强件**（Brotato 签名设计）：强效果配真代价 —— 代价必须落在"能不能做某件事"上（减伤/速度/生命），
+ *  而不是"封底为 0 的软肋"（那种负面玩家会直接无视）。 */
+export const ITEMS = [
+  /* ---- T1：常见，便宜，小幅（构件） ---- */
+  { id: 'mag', name: '弹匣扩容', icon: '📦', tier: 1, base: 30, stats: { atkSpd: 0.10 } },
+  { id: 'plate', name: '附加装甲', icon: '🛡️', tier: 1, base: 35, stats: { maxHp: 30 } },
+  { id: 'calib', name: '火力校准', icon: '🔥', tier: 1, base: 40, stats: { dmgMul: 0.08 } },
+  { id: 'aim', name: '瞄准芯片', icon: '🎯', tier: 1, base: 40, stats: { crit: 0.06 } },
+  { id: 'frag', name: '碎裂弹头', icon: '💥', tier: 1, base: 40, stats: { critDmg: 0.25 } },
+  { id: 'hook', name: '拾荒钩爪', icon: '🪝', tier: 1, base: 30, stats: { pickupRange: 40 } },
+  { id: 'thruster', name: '微调推进器', icon: '👟', tier: 1, base: 35, stats: { speed: 22 } },
+  { id: 'scope', name: '战术目镜', icon: '🔭', tier: 1, base: 35, stats: { rangeMul: 0.12 } },
+  { id: 'lucky', name: '幸运币', icon: '🍀', tier: 1, base: 35, stats: { luck: 2 } },
+  { id: 'harvester', name: '收获机', icon: '🌾', tier: 1, base: 40, stats: { harvest: 3 } },
+  { id: 'repair', name: '应急维修', icon: '🧰', tier: 1, base: 25, flag: 'heal40', desc: '立刻回复 40% 最大生命' },
+
+  /* ---- T2：中等，开始有方向 ---- */
+  { id: 'brutal', name: '凶暴核心', icon: '😤', tier: 2, base: 70, stats: { dmgMul: 0.18, dr: -0.05 } },
+  { id: 'metab', name: '代谢加速', icon: '💚', tier: 2, base: 65, stats: { regen: 0.6, maxHp: -10 } },
+  { id: 'magnet', name: '磁暴引线', icon: '🧲', tier: 2, base: 60, stats: { pickupRange: 60, orbPullMul: 0.6 } },
+  { id: 'melee_amp', name: '近战增幅器', icon: '⚔️', tier: 2, base: 70, stats: { meleeDmg: 0.22 } },
+  { id: 'ranged_amp', name: '远程增幅器', icon: '🏹', tier: 2, base: 70, stats: { rangedDmg: 0.22 } },
+  { id: 'elem_amp', name: '元素增幅器', icon: '⚡', tier: 2, base: 70, stats: { elemDmg: 0.22 } },
+  { id: 'vamp', name: '吸血协议', icon: '🩸', tier: 2, base: 80, stats: { killHealFlat: 0.8 } },
+  { id: 'spring', name: '弹性装甲', icon: '🌀', tier: 2, base: 70, stats: { dodge: 0.08 } },
+  { id: 'phase', name: '相位发生器', icon: '🔵', tier: 2, base: 90, flag: 'shield', desc: '获得相位护盾：每 10 秒完全抵挡一次伤害' },
+  { id: 'caravan', name: '商队契约', icon: '💠', tier: 2, base: 50, flag: 'money', desc: '立刻获得 110 信用点' },
+
+  /* ---- T3：稀有，强效果带真代价 ---- */
+  { id: 'overcap', name: '过载电容', icon: '🔋', tier: 3, base: 130, stats: { dmgMul: 0.45, atkSpd: -0.15 } },
+  { id: 'glass', name: '命悬一线', icon: '💀', tier: 3, base: 130, stats: { dmgMul: 0.60, pctMaxHp: -0.30 } },
+  { id: 'forge', name: '装甲熔炉', icon: '🏭', tier: 3, base: 120, stats: { dr: 0.12, speed: -30 } },
+  { id: 'greed', name: '贪婪核心', icon: '🤑', tier: 3, base: 140, stats: { creditsPerKill: 1 } },
+  { id: 'singularity', name: '引力奇点', icon: '🕳️', tier: 3, base: 120, flag: 'lockOrbs', stats: { pickupRange: 120, orbPullMul: 0.6 } },
+  { id: 'slowfield', name: '时滞立场', icon: '⏳', tier: 3, base: 130, flag: 'slowfield', desc: '260 范围内的敌方单位速度 −30%' },
+  { id: 'sniper', name: '狙击套件', icon: '🎯', tier: 3, base: 120, stats: { rangeMul: 0.35, crit: 0.12, atkSpd: -0.10 } },
+
+  /* ---- T4：传说（一局最多见几次） ---- */
+  { id: 'overcore', name: '超载核心', icon: '☢️', tier: 4, base: 220, stats: { dmgMul: 0.90, pctMaxHp: -0.25 } },
+  { id: 'nano', name: '纳米自修复', icon: '🧬', tier: 4, base: 200, stats: { regen: 1.4, maxHp: 40 } },
+  { id: 'warmachine', name: '战争机器', icon: '🤖', tier: 4, base: 240, stats: { dmgMul: 0.35, atkSpd: 0.25, maxHp: 50, speed: -20 } },
+  { id: 'inject', name: '数据注入', icon: '📡', tier: 4, base: 180, flag: 'levelup', desc: '立刻获得 1 级经验（会触发升级面板）' }
 ];
+
 
 /** 信用点掉落：**只来自"事件"**（精英波 / 首领）+ 事件奖励 + 碎片（见 ORB_CREDIT_PER_EXP）——
  *  随机精英化的小怪不付钱：随机精英化最高占 26% 的生成量，按它发钱等于"按怪群规模发钱"
