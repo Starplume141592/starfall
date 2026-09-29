@@ -119,8 +119,11 @@ function bakeBackground() {
       }
     };
   };
-  BG_LAYERS[1].tile = bakeTile(BG_LAYERS[1].size, star(120, 0.8, 0.55));
-  BG_LAYERS[2].tile = bakeTile(BG_LAYERS[2].size, star(26, 1.5, 1));
+  /* 2026-09-29 提亮：实测改动前一屏的平均亮度只有 15.8、94% 的采样点接近纯黑 ——
+     "深空"是对的，但第一屏读起来像"没画东西"。密度与亮度同时加，只动这里，不动 PALETTE
+     （PALETTE 是调色板门禁的事实来源，改它要重记基线）。 */
+  BG_LAYERS[1].tile = bakeTile(BG_LAYERS[1].size, star(220, 1.0, 0.80));
+  BG_LAYERS[2].tile = bakeTile(BG_LAYERS[2].size, star(44, 1.8, 1));
 }
 
 function drawBackdrop(ctx, cx, cy, zoom, W, H) {
@@ -399,7 +402,7 @@ export function render(ctx, S) {
 
   /* 屏幕空间：底色 */
   const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.75);
-  bg.addColorStop(0, '#0a1018'); bg.addColorStop(1, '#05070b');
+  bg.addColorStop(0, '#0d1724'); bg.addColorStop(1, '#070c13');   // 提亮一档（原 #0a1018 / #05070b）
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
   /* 屏幕空间：星空 + 星云（视差层，在网格与实体之下） */
@@ -417,7 +420,7 @@ export function render(ctx, S) {
   const cull = (x, y, m) => x > cx - m && x < cx + vw + m && y > cy - m && y < cy + vh + m;
 
   /* 背景网格：画在世界坐标里，跟着镜头滚动（颜色取调色板的 B0 背景带） */
-  ctx.strokeStyle = PALETTE.grid; ctx.globalAlpha = 0.55; ctx.lineWidth = 1;
+  ctx.strokeStyle = PALETTE.grid; ctx.globalAlpha = 0.68; ctx.lineWidth = 1;   // 0.55 → 0.68：让场地有结构感
   ctx.beginPath();
   const gs = 64;
   const gx0 = Math.floor(cx / gs) * gs;

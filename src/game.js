@@ -183,7 +183,6 @@ const elHp = document.getElementById('hpFill');
 const elXp = document.getElementById('xpFill');
 const elHpNum = document.getElementById('hpHp');
 const elXpVal = document.getElementById('xpVal');
-const elLv = document.getElementById('sLv');
 const elWave = document.getElementById('sWave');
 const elTime = document.getElementById('clockTime');     // 顶部正中：运行计时
 const elKill = document.getElementById('sKill');
@@ -192,7 +191,6 @@ const elShopBtn = document.getElementById('shopBtn');
 const elShopCredits = document.getElementById('shopCredits');
 const elNext = document.getElementById('clockNext');      // 顶部正中：下一波倒计时
 const elEvent = document.getElementById('clockEvent');    // 顶部正中：事件目标进度（无事件时隐藏）
-const elZoom = document.getElementById('sZoom');
 const loadoutEl = document.getElementById('loadout');
 let loadoutKey = '';
 const elCombo = document.getElementById('combo');
@@ -266,6 +264,13 @@ function syncPauseState() {
   G.paused = pausedManual || !!currentOptions || !!panelMode;
 }
 
+/** 暂停面里的低频读数（型号 / 视角 / 波次）：
+ *  这些数字战斗中没有决策价值，但"暂停时想确认一下"很常见 —— 写一次即可，不进每帧 HUD。 */
+function setPauseReadout() {
+  const el = document.getElementById('pauseReadout');
+  if (el) el.textContent = `型号 ${mkName(player.level)} · 视角 ${zoom.toFixed(1)}× · 第 ${G.wave} 波 · 击毁 ${player.kills}`;
+}
+
 function togglePause(force, reason) {
   if (G && G.over) return;
   pausedManual = force === undefined ? !pausedManual : !!force;
@@ -273,6 +278,7 @@ function togglePause(force, reason) {
   pauseEl.classList.toggle('hidden', !pausedManual);
   if (pausedManual && pauseTitleEl) {
     pauseTitleEl.textContent = pauseReason === 'blur' ? '窗口失焦 · 已暂停' : '已暂停';
+    setPauseReadout();          // 低频读数：只在打开暂停时写一次（不进每帧 HUD）
   }
   syncPauseState();
 }
@@ -1046,7 +1052,20 @@ function buildOptions() {
       apply: () => { player.slotUp = (player.slotUp || 0) + 1; }
     });
   }
-  return pickWeighted(pool, 3);
+  const out = pickWeighted(pool, 3);
+  /* **保底成长线**（压方差）：每 3 级至少出现一张"直接加输出"的卡。
+     为什么需要：机制件（连锁反应等）是乘法成长，抽到就滚雪球、抽不到就崩 ——
+     实测 12 局里 6 局死在第 13 波，其中多数是"3 次升级都没摸到输出"。
+     保底只保证**出现**，不替玩家做选择（选不选仍然是玩家的事）。 */
+  if (player.level % 3 === 0) {
+    const DMG_STATS = new Set(['dmg', 'as', 'crit', 'hpPct', 'armor']);
+    const has = out.some(o => (o.kind === 'stat' && DMG_STATS.has(o.iid)) || o.kind === 'slot');
+    if (!has) {
+      const cands = pool.filter(o => o.kind === 'stat' && DMG_STATS.has(o.iid));
+      if (cands.length) out[out.length - 1] = cands[Math.floor(Math.random() * cands.length)];
+    }
+  }
+  return out;
 }
 
 
@@ -1401,9 +1420,15 @@ function drawTier(beat) {
  *  武器也吃 `weaponClass`：卡片上标出【近战/远程/元素】，玩家才知道它吃哪项属性。 */
 function drawWeapon(beat, used) {
   const tier = drawTier(beat);
-  const cands = Object.keys(WEAPONS).filter(id => !used.has('w:' + id));
-  if (!cands.length) return null;
-  const id = cands[Math.floor(Math.random() * cands.length)];
+  const all = Object.keys(WEAPONS).filter(id => !used.has('w:' + id));
+  if (!all.length) return null;
+  /* **同名武器池**（Brotato 的 same-weapon pool，我们给到 35%）：合成是品级成长的**唯一**路径，
+     而"货架给不给你同名件"是当前方差的最大来源（实测：能合到 III 的局跑到第 37 波，
+     卡在 II 的局第 13 波就死）。这里不靠运气，靠权重 —— 手上有几把，就更容易刷到那几把。 */
+  const owned = new Set(player.weapons.map(w => w.id));
+  const mine = all.filter(id => owned.has(id));
+  const pool = (mine.length && Math.random() < 0.35) ? mine : all;
+  const id = pool[Math.floor(Math.random() * pool.length)];
   used.add('w:' + id);
   const def = WEAPONS[id];
   const clsName = { melee: '近战', ranged: '远程', elem: '元素' }[weaponClass(def)] || '远程';
@@ -1440,6 +1465,13 @@ function drawStock(n) {
     const pick = cands[Math.floor(Math.random() * cands.length)];
     used.add(pick.id);
     stock.push(pick);
+  }
+  /* **保底 1 件武器**：没有武器可选 = 这一局的成长线断了（Brotato 在前 5 家店也有同样的保底）。
+     槽位没满时，若整架一件武器都没有，就把第 1 格换成武器。 */
+  const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (player.slotUp || 0));
+  if (stock.length && !stock.some(e => e.weapon) && player.weapons.length <= slots) {
+    const w = drawWeapon(beat, new Set(stock.filter(e => e.weapon).map(e => 'w:' + e.weapon)));
+    if (w) stock[0] = w;
   }
   return stock;
 }
@@ -1889,6 +1921,61 @@ function closePanel() {
  *  "playfield first"（HUD 只允许一个主簇 + 一个次簇）。玩家真正的需求是
  *  **想看的时候能一眼看全**，所以放进抽屉式的暂停面板，随时开、随时关。
  *  只列"非默认值"，避免满屏 0 反而看不出重点。 */
+/** 属性说明表（属性面板的悬停解释）：每项都回答两件事 ——
+ *  **它是什么**，以及**当前这个数值实际带来多少**（后者才是玩家真正想知道的，
+ *  例如"减伤 24%"要说成"受到伤害 ×0.76"，而不是复述一遍 24%）。 */
+const STAT_HELP = {
+  '生命': v => `受击归零即结束本局。低于 35% 时此格转琥珀色提醒。\n当前 ${v}`,
+  '减伤': v => `受到的所有伤害乘以 (1 − 减伤)，封顶 60%。\n当前：承受 ${(1 - parseFloat(v) / 100).toFixed(2)} 倍伤害`,
+  '闪避': v => `每次受击按概率完全免疫（判定在减伤之前），封顶 60%。\n当前：约每 ${Math.max(1, Math.round(100 / parseFloat(v)))} 次受击免掉 1 次`,
+  '每秒回复': v => `不受任何条件影响的持续回血。\n当前：每 10 秒回 ${(parseFloat(v) * 10).toFixed(0)} 点`,
+  '击杀回复': v => `每次击杀回血，所有吸血共用"每秒最多 5% 最大生命"的上限。\n当前：每杀回 ${v}`,
+  '相位护盾': () => '每 10 秒完全抵挡一次伤害（超频模组「相位回路」把它压到 5 秒）',
+  '通用伤害': v => `所有武器的基础伤害倍率。\n当前：×${(1 + parseFloat(v.replace('+', '')) / 100).toFixed(2)}`,
+  '近战伤害': v => `只加成"贴身/环绕"类武器（刃环、无人机、回旋镖）。\n当前：这类武器再 ×${(1 + parseFloat(v.replace('+', '')) / 100).toFixed(2)}`,
+  '远程伤害': v => `只加成弹道类武器（导弹、霰弹、长矛）。\n当前：这类武器再 ×${(1 + parseFloat(v.replace('+', '')) / 100).toFixed(2)}`,
+  '元素伤害': v => `只加成能量类武器（脉冲、电弧、天基炮）。\n当前：这类武器再 ×${(1 + parseFloat(v.replace('+', '')) / 100).toFixed(2)}`,
+  '攻击速度': v => `武器冷却除以 (1 + 攻速)，与"冷却倍率"叠乘。\n当前：每秒多打约 ${v}`,
+  '暴击率': v => `每发独立判定，命中时按暴击伤害结算。\n当前：约每 ${Math.max(2, Math.round(100 / parseFloat(v)))} 发命中 1 次暴击`,
+  '暴击伤害': v => `暴击时的伤害倍率（默认 ×2.00）。\n当前：${v}`,
+  '武器射程': v => `所有武器的射程/环绕半径/光束长度一起放大。\n当前：×${(1 + parseFloat(v.replace('+', '')) / 100).toFixed(2)}`,
+  '额外穿透': v => `所有弹体命中后可以再多穿过 ${v} 个敌人（挂在 fireAllyBullet 单入口上，全武器生效）`,
+  '拾取范围': v => `残片进入这个半径就被锁定并开始吸附，越近吸得越快。\n当前：${v} 像素`,
+  '残片吸附': v => `吸附加速度的额外倍率（拾取范围越大，基础拉速也越快）。\n当前：+${v}`,
+  '收获': v => `**不靠击杀**的经济来源：每波结算时额外给这么多信用点。\n当前：每波 +${v}`,
+  '幸运': v => `提高商店出现高品级的概率（每点约 +3% 高档权重），也影响掉落。\n当前：+${v}`,
+  '每击杀': v => `每次击杀累积的信用点（小数累加、够 1 点才发放）。\n当前：一局约 1500 杀 → 约 ${Math.round(parseFloat(v) * 1500)} 信用点`,
+  '本局收入': () => '本局累计获得的信用点（四条途径之和：碎片 / 击杀 / 波次结算 / 精英与首领）',
+  '本局花费': () => '本局在商店花掉的信用点（含刷新费）',
+  '剩余': () => '手上还没花的信用点 —— 攒着不产生任何收益'
+};
+
+/** 悬停提示（自定义 tooltip，不用原生 title：原生提示延迟长、样式无法控制、换行也难看） */
+let tipEl = null;
+function ensureTip() {
+  if (tipEl) return tipEl;
+  tipEl = document.createElement('div');
+  tipEl.id = 'tip';
+  tipEl.className = 'hidden';
+  document.getElementById('stage').appendChild(tipEl);
+  return tipEl;
+}
+function showTip(target, text) {
+  const el = ensureTip();
+  el.textContent = text;
+  el.classList.remove('hidden');
+  const r = target.getBoundingClientRect();
+  el.style.left = '0px'; el.style.top = '0px';           // 先归零再量尺寸，避免读到上一次的宽高
+  const w = el.offsetWidth, h = el.offsetHeight;
+  let x = r.left + r.width / 2 - w / 2;
+  let y = r.top - h - 8;
+  if (y < 8) y = r.bottom + 8;                            // 上方放不下就放下面
+  x = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+}
+function hideTip() { if (tipEl) tipEl.classList.add('hidden'); }
+
 function showStats() {
   G.paused = true;
   currentOptions = null;
@@ -1896,7 +1983,10 @@ function showStats() {
   panelMode = 'stats';
   const p = player;
   const pct = v => `${v >= 0 ? '+' : '−'}${Math.round(Math.abs(v) * 100)}%`;
-  const cell = (label, val, hot) => `<span class="st${hot ? ' hot' : ''}"><i>${label}</i><b>${val}</b></span>`;
+  const cell = (label, val, hot, tipText) =>
+    `<span class="st${hot ? ' hot' : ''}"${tipText ? ` data-tip="${tipText.replace(/"/g, '&quot;')}"` : ''}><i>${label}</i><b>${val}</b></span>`;
+  /* 统一从 STAT_HELP 取说明（没写说明的项就没有提示，而不是给个空壳） */
+  const t = (label, v) => (STAT_HELP[label] ? STAT_HELP[label](v) : null);
   const grp = (title, cells) => {
     const body = cells.filter(Boolean).join('');
     return body ? `<div class="st-grp"><h3>${title}</h3><div class="st-grid">${body}</div></div>` : '';
@@ -1904,42 +1994,51 @@ function showStats() {
   const nz = (v, f) => (v ? f(v) : null);       // 只显示非默认值
 
   const alive = [
-    cell('生命', `${Math.round(p.hp)} / ${Math.round(p.maxHp)}`, p.hp / p.maxHp < 0.35),
-    nz(p.dr, v => cell('减伤', `${Math.round(v * 100)}%`)),
-    nz(p.dodge, v => cell('闪避', `${Math.round(v * 100)}%`)),
-    nz(p.regen, v => cell('每秒回复', v.toFixed(1))),
-    nz(p.killHealFlat, v => cell('击杀回复', v.toFixed(1))),
-    p.shield ? cell('相位护盾', '有') : null
+    cell('生命', `${Math.round(p.hp)} / ${Math.round(p.maxHp)}`, p.hp / p.maxHp < 0.35, t('生命')),
+    nz(p.dr, v => cell('减伤', `${Math.round(v * 100)}%`, false, t('减伤', Math.round(v * 100)))),
+    nz(p.dodge, v => cell('闪避', `${Math.round(v * 100)}%`, false, t('闪避', Math.round(v * 100)))),
+    nz(p.regen, v => cell('每秒回复', v.toFixed(1), false, t('每秒回复', v.toFixed(1)))),
+    nz(p.killHealFlat, v => cell('击杀回复', v.toFixed(1), false, t('击杀回复', v.toFixed(1)))),
+    p.shield ? cell('相位护盾', '有', false, t('相位护盾')) : null
   ];
   const dps = [
-    nz(p.dmgMul - 1, v => cell('通用伤害', pct(v))),
-    nz(p.meleeDmg, v => cell('近战伤害', pct(v))),
-    nz(p.rangedDmg, v => cell('远程伤害', pct(v))),
-    nz(p.elemDmg, v => cell('元素伤害', pct(v))),
-    nz(p.atkSpd, v => cell('攻击速度', pct(v))),
-    nz(p.crit, v => cell('暴击率', `${Math.round(v * 100)}%`)),
-    nz((p.critDmg || 2) - 2, v => cell('暴击伤害', `×${(2 + v).toFixed(2)}`)),
-    nz(p.rangeMul - 1, v => cell('武器射程', pct(v))),
-    nz((p.mechs && p.mechs.piercePlus) || 0, v => cell('额外穿透', `+${v}`))
+    nz(p.dmgMul - 1, v => cell('通用伤害', pct(v), false, t('通用伤害', pct(v)))),
+    nz(p.meleeDmg, v => cell('近战伤害', pct(v), false, t('近战伤害', pct(v)))),
+    nz(p.rangedDmg, v => cell('远程伤害', pct(v), false, t('远程伤害', pct(v)))),
+    nz(p.elemDmg, v => cell('元素伤害', pct(v), false, t('元素伤害', pct(v)))),
+    nz(p.atkSpd, v => cell('攻击速度', pct(v), false, t('攻击速度', pct(v)))),
+    nz(p.crit, v => cell('暴击率', `${Math.round(v * 100)}%`, false, t('暴击率', Math.round(v * 100)))),
+    nz((p.critDmg || 2) - 2, v => cell('暴击伤害', `×${(2 + v).toFixed(2)}`, false, t('暴击伤害', `×${(2 + v).toFixed(2)}`))),
+    nz(p.rangeMul - 1, v => cell('武器射程', pct(v), false, t('武器射程', pct(v)))),
+    nz((p.mechs && p.mechs.piercePlus) || 0, v => cell('额外穿透', `+${v}`, false, t('额外穿透', v)))
   ];
   const econ = [
-    cell('拾取范围', Math.round(p.pickupRange)),
-    nz(p.orbPullMul - 1, v => cell('残片吸附', pct(v))),
-    nz(p.harvest, v => cell('收获', v)),
-    nz(p.luck, v => cell('幸运', v)),
-    nz(p.creditsPerKill, v => cell('每击杀', `${v.toFixed(2)} 信用点`)),
-    cell('本局收入', Math.round(G.creditsEarned)),
-    cell('本局花费', Math.round(G.shopSpent)),
-    cell('剩余', Math.round(p.credits))
+    cell('拾取范围', Math.round(p.pickupRange), false, t('拾取范围', Math.round(p.pickupRange))),
+    nz(p.orbPullMul - 1, v => cell('残片吸附', pct(v), false, t('残片吸附', pct(v)))),
+    nz(p.harvest, v => cell('收获', v, false, t('收获', v))),
+    nz(p.luck, v => cell('幸运', v, false, t('幸运', v))),
+    nz(p.creditsPerKill, v => cell('每击杀', `${v.toFixed(2)} 信用点`, false, t('每击杀', v.toFixed(2)))),
+    cell('视角', zoom.toFixed(1) + '×', false, '镜头高度：滚轮或 −/= 调整。拉高看得更远（躲弹幕更容易），推近看得更清。'),
+    cell('本局收入', Math.round(G.creditsEarned), false, t('本局收入')),
+    cell('本局花费', Math.round(G.shopSpent), false, t('本局花费')),
+    cell('剩余', Math.round(p.credits), false, t('剩余'))
   ];
   const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (p.slotUp || 0));
   const weapons = p.weapons.map(w => {
     const def = WEAPONS[w.id];
     const band = weaponBand(def);
     const cls = { melee: '近战', ranged: '远程', elem: '元素' }[weaponClass(def)] || '远程';
-    return cell(weaponTierName(w.tier), `${def.name}【${cls}·${band.name}】`);
+    const tip = `${cls}武器 · 射程档【${band.name} ${band.value}】\n${def.desc(w.lv)}`;
+    return cell(weaponTierName(w.tier), `${def.name}【${cls}·${band.name}】`, false, tip);
   });
-  const mechList = Object.keys(p.mechs || {}).map(id => (MECH_REGISTRY[id] ? MECH_REGISTRY[id].name : id));
+  /* 机制格的提示直接取"卖它的那件商品"的说明（说明只有一处事实来源，不会走偏） */
+  const mechCells = Object.keys(p.mechs || {}).map(id => {
+    const lv = p.mechs[id];
+    const src = ITEMS.find(i => i.mech === id);
+    const nm = (MECH_REGISTRY[id] ? MECH_REGISTRY[id].name : id) + (lv > 1 ? ' ×' + lv : '');
+    const tip = (src && src.desc ? src.desc : '') + (lv > 1 ? '\n（已叠加 ' + lv + ' 层，效果按层数放大）' : '');
+    return cell('◈', nm, false, tip);
+  });
   const modList = MODULES.filter(m => p.mods[m.id]).map(m => m.name);
 
   panel.innerHTML = `<h2>当前属性 // ${mkName(p.level)}</h2>
@@ -1948,11 +2047,17 @@ function showStats() {
     ${grp('输出', dps)}
     ${grp('经济', econ)}
     ${grp(`武器 ${p.weapons.length}/${slots} 槽`, weapons)}
-    ${mechList.length ? grp('机制（商品）', mechList.map(m => cell('◈', m))) : ''}
-    ${modList.length ? grp('超频模组', modList.map(m => cell('◆', m))) : ''}
+    ${mechCells.length ? grp('机制（商品）', mechCells) : ''}
+    ${modList.length ? grp('超频模组', MODULES.filter(m => p.mods[m.id]).map(m => cell('◆', m.name, false, m.desc))) : ''}
     <button class="btn alt" id="statsClose">返回战场<span class="hk">ESC</span></button>`;
   overlay.classList.add('show');
   document.getElementById('statsClose').onclick = closeStats;
+  /* 悬停提示：委托到 panel 上，面板重绘也不用重新绑 */
+  panel.onmouseover = (ev) => {
+    const cellEl = ev.target.closest('.st[data-tip]');
+    if (cellEl) showTip(cellEl, cellEl.dataset.tip); else hideTip();
+  };
+  panel.onmouseleave = hideTip;
 }
 
 /** 关掉属性面板（不推进任何进程 —— 它只是"看一眼"，不是流程的一部分） */
@@ -3240,7 +3345,6 @@ function updateHUD() {
   setWidth(elXp, 'xpW', xpPct.toFixed(1) + '%');
   setText(elHpNum, 'hpN', Math.ceil(player.hp) + '/' + player.maxHp);
   setText(elXpVal, 'xpN', Math.floor(xpPct) + '%');
-  setText(elLv, 'lv', mkName(player.level));
   setText(elWave, 'wave', G.wave);
   setText(elTime, 'time', fmtTime(G.t));
   setText(elKill, 'kill', player.kills);
@@ -3283,7 +3387,7 @@ function updateHUD() {
   setFlag(elEvent, 'evWarn', evWarn);
   /* 事件行无内容时收起来，避免顶部正中多出一条空行（playfield first：中上区域不养赘肉） */
   if (elEvent._evOn !== inEvent) { elEvent._evOn = inEvent; elEvent.classList.toggle('hidden', !inEvent); }
-  setText(elZoom, 'zoom', zoomTarget.toFixed(1) + '×');
+  /* 视角读数已从 HUD 移走（低频信息，见 D-010 的 HUD 减负）：现在只在暂停面的 pauseReadout 与属性面板里 */
 
   /* 构筑一览：内容变了才重写 DOM */
   const key = player.weapons.map(w => w.id + w.tier).join(',') + '|' + Object.keys(player.mods).join(',');
@@ -3475,7 +3579,16 @@ function botStep() {
 function botShopScore(it) {
   let s = 0;
   const slots = Math.min(RUN.maxWeaponSlots, RUN.weaponSlots + (player.slotUp || 0));
-  if (it.weapon) s += player.weapons.length < slots ? 100 : 70;
+  /* 跟着构筑走：已经拿了某类武器（近战/远程/元素）时，同类武器更值钱 ——
+     真人也这么买（同类能吃"共鸣矩阵"与属性加成，见 weaponClass）。 */
+  if (it.weapon) {
+    s += player.weapons.length < slots ? 100 : 70;
+    const wcls = weaponClass(WEAPONS[it.weapon]);
+    const same = player.weapons.filter(w => weaponClass(WEAPONS[w.id]) === wcls).length;
+    s += same >= 2 ? 18 : 0;
+    /* 同名同品级能**合成**：这条比什么都值钱（品级 +1 是乘法成长） */
+    if (player.weapons.some(w => w.id === it.weapon && w.tier === it.tier && w.tier < 4)) s += 60;
+  }
   if (it.mech) s += 75;
   const st = it.stats || {};
   if (st.dmgMul || st.atkSpd || st.crit || st.critDmg || st.meleeDmg || st.rangedDmg || st.elemDmg || st.rangeMul) s += 70;
@@ -3543,7 +3656,11 @@ function sim(seconds, opts) {
           const best = shopStock.filter(e => canBuy(e.it, e.price))
             .map(e => ({ e, s: botShopScore(e.it) }))
             .sort((a, b) => b.s - a.s)[0];
-          if (!best || best.s < 40) break;              // 低于阈值的货不值得买，钱留着
+          if (!best) break;
+          /* 阈值 40 之上才买；但**钱囤着也没用** —— 富余到一定程度就退而求其次，
+             否则机器人会留下几百信用点不花，测出来的构筑比真人弱（第一轮实测结余 112–1333）。 */
+          const rich = player.credits > 220;
+          if (best.s < 40 && !(rich && best.s >= 18)) break;
           if (!buyItem(best.e.it, best.e.price)) break;
         }
       }

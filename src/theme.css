@@ -884,3 +884,29 @@ body.mobile #cornerbar > button { padding: 8px 12px; font-size: 12px; }
 /* 只给"需要立刻注意"的一项上色：生命偏低（危险语义色） */
 .st.hot { border-color: rgba(255, 176, 32, 0.42); background: rgba(255, 176, 32, 0.08); }
 .st.hot b { color: #FFB020; }
+
+/* ---------- 悬停解释（属性面板，2026-09-29）----------
+   为什么不用原生 title：延迟长（~1s）、样式不可控、不能换行、深色主题下很突兀。
+   自定义 tooltip 保持"终端风"：等宽、细边框、直角偏方（与 D-010 的柔化取值一致）。 */
+#tip {
+  position: fixed; z-index: 340;          /* 高于 overlay(300) 与 pause(320)，面板开着也能看见 */
+  max-width: 300px; padding: 8px 10px;
+  font-size: 11.5px; line-height: 1.6; white-space: pre-line;
+  color: #D6E8FF;
+  background: rgba(8, 14, 22, 0.96);
+  border: 1px solid rgba(143, 176, 207, 0.35);
+  border-radius: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  pointer-events: none;                    /* 不能挡住鼠标，否则会自己触发移出 */
+  transition: opacity 0.12s ease-out;
+}
+#tip.hidden { display: none; }
+/* 可悬停的格子给一点提示：光标 + 极淡的描边（不改颜色，只改不透明度） */
+.st[data-tip] { cursor: help; }
+.st[data-tip]:hover { border-color: rgba(143, 176, 207, 0.34); background: rgba(143, 176, 207, 0.10); }
+
+/* 底部操作提示：**不再永久常驻**（2026-09-29）。
+   它是"上手前几秒需要、之后永远碍事"的信息；旧版一直挂在画面底部，
+   既占 playfield 又不提供决策价值。现在 14 秒后淡出，之后只在暂停面里查得到。 */
+#hint { animation: hintFade 0.8s ease-in 14s forwards; }
+@keyframes hintFade { to { opacity: 0; visibility: hidden; } }

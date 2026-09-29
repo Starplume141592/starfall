@@ -346,7 +346,7 @@ export function statsText(stats) {
  *  - w ≥ 25：保留指数段 → 必须靠成型构筑（终局压力，否则一局不会结束）
  */
 export const ENEMY_SCALE = w =>
-  (1 + w * 0.075 + w * w * 0.0022 + Math.max(0, w - 12) * 0.09) * (1 + Math.max(0, w - 25) * 0.20);
+  (1 + w * 0.068 + w * w * 0.0019 + Math.max(0, w - 12) * 0.045) * (1 + Math.max(0, w - 25) * 0.20);
 /* 敌方伤害成长：试过调到 0.045 想补回"生成率下调"造成的压力缺口，实测反而把第 18 波前后
    变成硬墙（351 秒早死）—— 后期压力应该由机制（狙击机 / 封锁圈 / Boss 阶段 / 精英波规模）提供，
    而不是让每一次挨打都更疼。保持原值。 */
@@ -485,7 +485,7 @@ export const ZONE = { telegraph: 1.2, r: 96, life: 0.35, dmgMul: 1.6, max: 8 };
 export const SHOOTER_BULLET = w => ({ spd: 200, r: 4, dmg: (5 + w * 0.5) * ENEMY_DMG_SCALE(w), life: 5, color: PALETTE.enemyBullet });
 
 /** 版本号：出现在反馈报告与"意见收集"面板里 —— 报 bug 时能一眼对上是哪个版本 */
-export const VERSION = '0.5.0';
+export const VERSION = '0.6.0';
 /** 反馈去向：公开仓库的 Issues（页面已开启，预填标题与正文） */
 export const REPO_URL = 'https://github.com/Starplume141592/starfall';
 export const ISSUE_URL = REPO_URL + '/issues/new';

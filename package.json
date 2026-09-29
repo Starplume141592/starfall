@@ -1,6 +1,6 @@
 {
   "name": "starfall",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "星陨 - 深空残骸带幸存者（原生 ES module + canvas 2D，无构建步骤）",
   "type": "module",
   "private": true,
