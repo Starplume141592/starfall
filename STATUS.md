@@ -7,7 +7,25 @@
 
 ---
 
+## 🚀 发布记录（2026-09-29）
+
+| 项 | 值 |
+|---|---|
+| 提交 | **`f1505b7`** `release(0.6.0): 收尾发布 —— 测量工具修正 · 压方差 · 曲线收敛 · 世界提亮 · HUD 减负 · 属性面板提示` |
+| 远端 | **`main` = `dev` = `f1505b7`**（推 `main` 即发布，GitHub Pages 直接从分支发布） |
+| CI | `check` 在 **`main`** 与 `dev` 上均 **success**（这是 `check` 第一次真在 `main` 上跑） |
+| 部署 | `pages build and deployment` **success** |
+| 线上验证 | 从线上 `main` 取回 `src/config.js` → `export const VERSION = '0.6.0';` ✅ |
+| 站点 | https://starplume141592.github.io/starfall/ |
+
+> ⚠️ **发布时踩到的坑（下次照做）**：本机 `hosts` 把 `github.com` / `github.io` / `githubusercontent` 等**逐条指向 `127.0.0.1`**，`git push` 直接报 `Connection was reset`；但**真实 IP 是通的**（`140.82.121.4:443` 可达）。
+> 解决办法：跑一个**本地 HTTPS CONNECT 转发器**（`.dsh/proxy.mjs`，只做原样字节转发、TLS 由 git 与 GitHub 直接完成），然后
+> `git -c http.proxy=http://127.0.0.1:8899 push origin main`。**没有修改系统 hosts**，推完即关。
+
+---
+
 ## 🏁 收尾状态（2026-09-29）
+
 
 | | |
 |---|---|
