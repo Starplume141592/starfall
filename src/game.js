@@ -8,7 +8,7 @@ import {
   TURN_RATE, TURN_ACCEL, TURN_BIG, ACCEL_BRAKE, CAMERA,
   ORB, ORB_AUTO_PICKUP, ORB_PULL, ORB_PULL_CLOSE, ORB_DRAG, ORB_ABSORB_PAD, ORB_MAX,
   PICKUP, PICKUP_MAGNET_RANGE, META_UPGRADES, ITEMS, STAT_KEYS, statsText, weaponClass, CREDIT, shopPriceOf,
-  ORB_CREDIT_PER_EXP,
+  ORB_CREDIT_PER_EXP, weaponLvOf, weaponTierName, WEAPON_TIER,
   VERSION, REPO_URL, ISSUE_URL, FEEDBACK_KINDS, FEEDBACK_MAIL,
   expNeed, mkName
 } from './config.js';
@@ -316,12 +316,12 @@ function reset() {
     dmgMul: (ship.dmgMul || PLAYER.dmgMul) + mb.dmgMul,
     cdMul: (ship.cdMul || PLAYER.cdMul) * mb.cdMul,
     invuln: 0, kills: 0,
-    credits: mb.credits, shopBought: {},      // 局内商店：信用点 + 本局购买记录（涨价用）
+    credits: mb.credits + (RUN.startCredits || 0), shopBought: {},      // 局内商店：信用点 + 本局购买记录（涨价用）
     regen: 0, shield: false, shieldCd: 0, slowField: 1, orbPullMul: 1,   // 超频跃迁模组带来的能力
     killHealAcc: 0, killHealAt: 0,                        // 击杀回血的每秒上限
     statLevels: {}, mods: {}, jumpPending: false,
     ship: ship.id, shipName: ship.name,
-    weapons: [{ id: ship.start, lv: 1, t: 0.15, angle: 0 }],
+    weapons: [{ id: ship.start, tier: 1, lv: 1, t: 0.15, angle: 0 }],
     touch: { active: false, sx: 0, sy: 0, dx: 0, dy: 0, id: null }
   };
   G = {
@@ -340,6 +340,8 @@ function reset() {
     creditsEarned: 0, creditsBySource: {}, creditAcc: 0, killCreditAcc: 0,
     /* 机制层观测项：mechBlasts = 机制爆炸触发次数（判据：带了机制的商品必须在 sim 里真的触发过） */
     mechDepth: 0, mechBlasts: 0,
+    /* 武器来源记账（阶段 B1）：回答"武器到底从哪来" —— 商店 / 事件 / 掉落 / 解锁 / 彩蛋 */
+    weaponBySource: {},
     orbsCollected: 0, expFromOrbs: 0,
     shopVisits: 0, shopVisitsSqueezed: 0, shopVisitsBroke: 0, shopAffordTotal: 0,
     shopBuys: 0, shopSpent: 0, shopRerolls: 0, shopLocks: 0,
@@ -944,6 +946,38 @@ function pickWeighted(pool, n) {
   return out;
 }
 
+/** **武器发放的唯一入口**（A11 的架构约束）—— 与 `fireBullet` / `fireAllyBullet` / `gainCredits`
+ *  同样的理由：武器来源以后会有很多（商店 / 事件奖励 / 掉落 / 条件解锁 / 彩蛋），
+ *  散落成多处 `player.weapons.push(...)` 就必然出现"改一处只生效一处"。
+ *
+ *  合成规则（A2）：同名**同品级**再拿一把 → 合成成品级 +1，占格不变。
+ *  `source` 目前只用于记账（`G.weaponBySource`），以便回答"武器到底从哪来"。
+ *
+ *  @returns 'combine' 合成 / 'new' 新增 / 'full' 槽位满 / null 失败 */
+function grantWeapon(id, tier, source) {
+  const def = WEAPONS[id];
+  if (!def) return null;
+  const t = Math.max(1, Math.min(4, tier || 1));
+  G.weaponBySource[source] = (G.weaponBySource[source] || 0) + 1;
+  const same = player.weapons.find(w => w.id === id && w.tier === t && w.tier < 4);
+  if (same) {
+    same.tier++;
+    same.lv = weaponLvOf(same.tier);
+    addText(player.x, player.y - 54, `${def.name} → ${weaponTierName(same.tier)} 品级`, PALETTE.elite, 20);
+    audio.levelUp();
+    return 'combine';
+  }
+  const slots = RUN.weaponSlots + (player.slotUp || 0);
+  if (player.weapons.length >= slots) {
+    addText(player.x, player.y - 54, '武器槽已满', PALETTE.enemyBullet, 18);
+    audio.hurt();
+    return 'full';
+  }
+  player.weapons.push({ id, tier: t, lv: weaponLvOf(t), t: 0, angle: 0 });
+  addText(player.x, player.y - 54, `${def.name} ${weaponTierName(t)}`, PALETTE.allyBeam, 18);
+  return 'new';
+}
+
 /** 池子抽干后的保底（可重复），保证升级永远有东西可选 */
 function buildFallbackOptions() {
   return [
@@ -952,59 +986,30 @@ function buildFallbackOptions() {
   ];
 }
 
-/** 普通装备池：武器（强化 / 新增）+ 属性（各自有上限） */
+/** 升级池（阶段 B2 重排，落实 A4）：**不再给武器、也不给武器强化**。
+ *
+ *  为什么：武器已经从"升级抽卡"搬到**商店**（A11 的单一入口 `grantWeapon`），
+ *  成长只靠**同名同品级合成**（A2）。升级池里若还留着武器卡，同一件事就有两个入口 ——
+ *  那正是旧版"权重全压在武器上（2.2× / 3.5×）、生存卡永远抽不到"的成因。
+ *
+ *  现在升级给三种东西（A4 的分工）：
+ *  **属性**（量，各自有上限）· **武器槽位**（结构：3 → 6）· **飞船机制**（变数，后续阶段） */
 function buildOptions() {
   const pool = [];
-  /* 保底 2（Pity 2）做成"加权"而不是"强制替换一张卡"：
-     强制替换会挤掉 1/3 的选择多样性，实测（贪心机器人）会把资源全推给武器、完全不买生存，
-     反而更容易在首个精英墙崩掉。加权既保留玩家的选择，又把池子导向"练一条主线"。 */
-  const unmaxed = player.weapons.filter(w => w.lv < (WEAPONS[w.id] ? WEAPONS[w.id].maxLv : 1)).length;
-  const focusBoost = (player.weapons.length >= 4 && unmaxed === player.weapons.length) ? 2.5 : 1;
-  for (const id in WEAPONS) {
-    const def = WEAPONS[id];
-    const owned = player.weapons.find(w => w.id === id);
-    if (owned) {
-      if (owned.lv < def.maxLv) {
-        const lv = owned.lv + 1;
-        pool.push({
-          kind: 'weaponUp', name: def.name, icon: def.icon, iid: id, icolor: def.color,
-          w: 2.2 * focusBoost, tag: def.tag || `强化 Lv.${owned.lv} → Lv.${lv}`,
-          range: weaponRange(id, lv), rangeMax: MAX_WEAPON_RANGE,
-          desc: def.desc(lv), apply: () => { owned.lv = lv; }
-        });
-      }
-    } else {
-      pool.push({
-        kind: 'newWeapon', name: def.name, icon: def.icon, iid: id, icolor: def.color,
-        w: 3.5, tag: def.tag ? `${def.tag} · 新装备` : '★ 新装备',
-        range: weaponRange(id, 1), rangeMax: MAX_WEAPON_RANGE,
-        desc: def.desc(1), apply: () => { player.weapons.push({ id, lv: 1, t: 0, angle: 0 }); }
-      });
-    }
-  }
-  for (const s of STATS) {
-    const lv = player.statLevels[s.id] || 0;
-    if (lv >= s.maxLevel) continue;                       // 关键：属性有上限，杜绝无限堆叠
-    /* 情境剔除（鸡肋卡清理）：满血时的即时治疗 = 空卡；后期固定值卡被成长曲线碾压。
-       这两条只改「出现资格」和权重，不动任何数值，因此不影响已通过的战力校准。 */
-    if (s.id === 'heal' && player.hp >= player.maxHp - 5) continue;
-    let w = s.w;
-    if ((s.id === 'hp' || s.id === 'heal') && player.level >= 40) w *= 0.45;
+  /* 武器槽位：一条**结构性**选择（不是数值）—— 槽位决定你能同时押几把武器，
+     进而决定同名合成与"吃哪类属性"的空间。权重刻意低于属性卡：它是"为未来投资"，不该每级都来。 */
+  const slots = RUN.weaponSlots + (player.slotUp || 0);
+  if (slots < RUN.maxWeaponSlots) {
     pool.push({
-      kind: 'stat', name: s.name, icon: s.icon, iid: s.id, w, tag: `属性强化 ${lv}/${s.maxLevel}`, desc: s.desc,
-      apply: () => { s.apply(player); player.statLevels[s.id] = lv + 1; }
+      kind: 'slot', name: '武器槽位', icon: '🗂️', iid: 'slot', w: 1.3,
+      tag: `槽位 ${slots} / ${RUN.maxWeaponSlots}`,
+      desc: `武器槽位 +1（上限 ${RUN.maxWeaponSlots}）· 槽位越多，能同时押的武器越多`,
+      apply: () => { player.slotUp = (player.slotUp || 0) + 1; }
     });
   }
-  const out = pickWeighted(pool, 3);
-  /* 保底（Pity）：武器不足 3 把时强制出现一把新武器 —— 否则开局连抽不到武器会直接崩盘，
-     导致单局时长呈两极分布（要么 3 分钟死、要么 15 分钟活）。 */
-  if (player.weapons.length < 3 && !out.some(o => o.kind === 'newWeapon')) {
-    const cands = pool.filter(o => o.kind === 'newWeapon');
-    if (cands.length) out[Math.floor(Math.random() * out.length)] = cands[Math.floor(Math.random() * cands.length)];
-  }
-  /* 保底 2 已改为武器强化卡的权重加成（见 pool 构造处），不再强制替换卡位 */
-  return out;
+  return pickWeighted(pool, 3);
 }
+
 
 /** 超频跃迁池：一次性模组，四选一 */
 function buildModuleOptions() {
@@ -1099,7 +1104,7 @@ function gameOver() {
   saveMeta();
 
   const build = player.weapons
-    .map(w => `${WEAPONS[w.id].name} Lv${w.lv}`)
+    .map(w => `${WEAPONS[w.id].name} ${weaponTierName(w.tier)}`)
     .join(' · ');
   const mods = MODULES.filter(m => player.mods[m.id]).map(m => m.name).join(' · ');
 
@@ -1293,13 +1298,37 @@ function drawTier(beat) {
   return 1;
 }
 
+/** 抽一件武器（品级与道具用同一套解锁曲线，且同样"同店不重复"）。
+ *  武器也吃 `weaponClass`：卡片上标出【近战/远程/元素】，玩家才知道它吃哪项属性。 */
+function drawWeapon(beat, used) {
+  const tier = drawTier(beat);
+  const cands = Object.keys(WEAPONS).filter(id => !used.has('w:' + id));
+  if (!cands.length) return null;
+  const id = cands[Math.floor(Math.random() * cands.length)];
+  used.add('w:' + id);
+  const def = WEAPONS[id];
+  const clsName = { melee: '近战', ranged: '远程', elem: '元素' }[weaponClass(def)] || '远程';
+  return {
+    weapon: id, tier, name: def.name, icon: def.icon, icolor: def.color,
+    base: WEAPON_TIER.price[tier],
+    desc: `【${clsName}】${def.desc(weaponLvOf(tier))}`
+  };
+}
+
 /** 货架抽取：n 件、**同店不重复**、尊重每局上限 `max`。
- *  抽到的品级若已抽空（该档全被 limit 挡住）就**向下降一级**兜底 —— 保证货架永远是满的。 */
+ *  抽到的品级若已抽空（该档全被 limit 挡住）就**向下降一级**兜底 —— 保证货架永远是满的。
+ *
+ *  武器占货架 `RUN.weaponSlotChance` 的比重（Brotato 是 35%）：**武器与道具必须在同一个货架上抢钱**，
+ *  否则"买武器还是买道具"不是取舍，而是两条互不相干的线。 */
 function drawStock(n) {
   const beat = Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat);
   const stock = [];
   const used = new Set();
   for (let i = 0; i < n; i++) {
+    if (Math.random() < RUN.weaponSlotChance) {
+      const w = drawWeapon(beat, used);
+      if (w) { stock.push(w); continue; }
+    }
     let cands = [];
     for (let t = drawTier(beat); t >= 1 && !cands.length; t--) {
       cands = ITEMS.filter(it => it.tier === t
@@ -1307,7 +1336,7 @@ function drawStock(n) {
         && (it.max === undefined || it.max < 0 || (player.shopBought[it.id] || 0) < it.max)
         && !(it.flag === 'shield' && player.shield));
     }
-    if (!cands.length) break;
+    if (!cands.length) continue;
     const pick = cands[Math.floor(Math.random() * cands.length)];
     used.add(pick.id);
     stock.push(pick);
@@ -1316,9 +1345,14 @@ function drawStock(n) {
 }
 
 /** 能不能买：**一处判定** —— 面板高亮 / 进店记账 / sim 机器人三处共用。
- *  上限 `max` 与"已拥有即不再出现"（护盾）都在这里，避免三处各写一遍然后走偏。 */
+ *  上限 `max`、"已拥有即不再出现"（护盾）、以及**武器槽位**都只在这里判定。 */
 function canBuy(it) {
   if (player.credits < shopPrice(it)) return false;
+  if (it.weapon) {
+    const same = player.weapons.find(w => w.id === it.weapon && w.tier === it.tier && w.tier < 4);
+    const slots = RUN.weaponSlots + (player.slotUp || 0);
+    return !!same || player.weapons.length < slots;      // 能合成 或 还有空槽
+  }
   if (it.max !== undefined && it.max >= 0 && (player.shopBought[it.id] || 0) >= it.max) return false;
   if (it.flag === 'shield' && player.shield) return false;
   return true;
@@ -1326,12 +1360,19 @@ function canBuy(it) {
 
 function buyItem(item) {
   const price = shopPrice(item);
-  if (player.credits < price) { audio.hurt(); return false; }
-  if (item.max !== undefined && item.max >= 0 && (player.shopBought[item.id] || 0) >= item.max) return false;
+  if (!canBuy(item)) { audio.hurt(); return false; }
   player.credits -= price;
   player.shopBought[item.id] = (player.shopBought[item.id] || 0) + 1;
   player.shopCount = (player.shopCount || 0) + 1;
   G.shopBuys++; G.shopSpent += price;
+
+  /* 武器（阶段 B1）：**只走 grantWeapon 单入口**（A11）——武器来源以后会有很多种，
+     散落成多处 push 必然"改一处只生效一处"。 */
+  if (item.weapon) {
+    audio.pickup();
+    grantWeapon(item.weapon, item.tier, 'shop');
+    return true;
+  }
 
   if (item.stats) applyStats(player, item.stats);
   /* 机制层：注册 handler（可叠加，层数进倍率）。机制不写进 stats，所以数值面板不会被污染。 */
@@ -1504,7 +1545,7 @@ function pushFeedbackLog(entry) {
 function collectDiagnostics() {
   const p = player, g = G;
   const up = Object.entries(meta.up || {}).map(([k, v]) => k + v).join(' ') || '无';
-  const build = p.weapons.map(w => `${WEAPONS[w.id].name} Lv${w.lv}`).join(' · ') || '无';
+  const build = p.weapons.map(w => `${WEAPONS[w.id].name} ${weaponTierName(w.tier)}`).join(' · ') || '无';
   const mods = MODULES.filter(m => p.mods[m.id]).map(m => m.name).join(' · ') || '无';
   return [
     `版本 ${VERSION}`,
@@ -1812,7 +1853,7 @@ function updateWeapons(dt) {
     else if (def.mode === 'nova') {
       w.t -= dt;
       if (w.t <= 0) {
-        w.t = def.cd(w.lv) * player.cdMul;
+        w.t = weaponCooldown(def, w.lv);
         const R = def.radius(w.lv);
         G.rings.push({ x: player.x, y: player.y, r: 12, max: R, age: 0, life: 0.42, color: def.color });
         forEachNear(player.x, player.y, R + 24, (e) => {
@@ -2929,11 +2970,11 @@ function updateHUD() {
   setText(elZoom, 'zoom', zoomTarget.toFixed(1) + '×');
 
   /* 构筑一览：内容变了才重写 DOM */
-  const key = player.weapons.map(w => w.id + w.lv).join(',') + '|' + Object.keys(player.mods).join(',');
+  const key = player.weapons.map(w => w.id + w.tier).join(',') + '|' + Object.keys(player.mods).join(',');
   if (key !== loadoutKey) {
     loadoutKey = key;
     loadoutEl.innerHTML =
-      player.weapons.map(w => `<span title="${WEAPONS[w.id].name} · 射程 ${weaponRange(w.id, w.lv)}">${iconFor(w.id, WEAPONS[w.id].color, WEAPONS[w.id].icon)}<i>${w.lv}</i></span>`).join('') +
+      player.weapons.map(w => `<span title="${WEAPONS[w.id].name} · 射程 ${weaponRange(w.id, w.lv)}">${iconFor(w.id, WEAPONS[w.id].color, WEAPONS[w.id].icon)}<i>${weaponTierName(w.tier)}</i></span>`).join('') +
       MODULES.filter(m => player.mods[m.id]).map(m => `<span class="mod" title="${m.name}">${iconFor(m.id, null, m.icon)}</span>`).join('');
   }
   if (G.combo >= 3) {
@@ -3027,7 +3068,7 @@ function snapshot() {
     allyBullets: G.bullets.length,
     allyBulletPeak: G.allyBulletPeak,
     allyBulletDropped: G.allyBulletDropped,
-    weapons: player.weapons.map(w => w.id + w.lv).join(' '),
+    weapons: player.weapons.map(w => w.id + weaponTierName(w.tier)).join(' '),
     over: G.over,
     /* 局内进程（0.6.0 阶段 0）：sim 验证"事件有没有真的发生、有没有成功/失败"靠这几个字段 */
     phase: G.phase,
@@ -3052,6 +3093,7 @@ function snapshot() {
     shopSpent: G.shopSpent,
     /* 机制层（阶段 A3）：带机制的商品必须在 sim 里**真的触发过** —— 否则它等于没做 */
     mechs: Object.keys(player.mechs || {}).join(',') || '-',
+    weaponSrc: Object.keys(G.weaponBySource).map(k => `${k}${G.weaponBySource[k]}`).join('/') || '-',
     mechBlasts: G.mechBlasts
   };
 }
@@ -3118,8 +3160,10 @@ function smartPick(opts) {
   const score = (o) => {
     switch (o.kind) {
       case 'module': return 120;
-      case 'newWeapon': return player.weapons.length < 5 ? 110 : 40;
-      case 'weaponUp': return 90;
+      case 'slot': {
+        // 槽位：武器还少的时候价值高（合成与吃属性的空间都在槽位上）
+        return player.weapons.length >= RUN.weaponSlots + (player.slotUp || 0) ? 85 : 45;
+      }
       case 'stat': {
         /* 像人一样地买生存：血量/减伤明显落后时优先买防御卡。
            原策略永远不买（属性恒 60 分 < 武器 90 分），于是测出一堆
