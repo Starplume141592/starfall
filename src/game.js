@@ -1123,7 +1123,8 @@ function gameOver() {
     ${mods ? `<p class="sub build">超频模组：${mods}</p>` : ''}
     <button class="btn" id="again">重新接入</button>
     <button class="btn alt" id="toMeta">研发终端</button>
-    <button class="btn alt" id="fbOver">意见收集</button>`;
+    <button class="btn alt" id="fbOver">意见收集</button>
+    <button class="btn alt" id="toMenu">返回主界面</button>`;
   overlay.classList.add('show');
   document.getElementById('again').onclick = showShipSelect;
   document.getElementById('toMeta').onclick = () => showMeta();
@@ -1141,6 +1142,42 @@ let shipId = (() => {
 
 /** 开局/重开前的机体三选一：纯单局差异，不做解锁、不碰存档（只记住上次选择）
  *  silent：首次加载时浏览器还没拿到用户手势，此时出声只会刷一串 AudioContext 警告 */
+/** 主界面（0.6.0 UI 优化）：一局游戏该有"门面"，而不是一进来就弹机体选择。
+ *
+ *  设计约束（见 .dsh/skills/ui-spec）：**一个主操作**（开始任务），其余是次级按钮；
+ *  不做"等权卡片墙"（那是 SaaS 后台的反模式）。信息只留三样：战绩 / 局外信用点 / 操作提示。 */
+function showMainMenu() {
+  G.paused = true;
+  currentOptions = null;
+  const best = loadBest();
+  panel.innerHTML = `<div id="title">星陨</div>
+    <p class="sub">深空残骸带 · 生存记录</p>
+    <p class="sub best">${best ? `最佳 存活 ${fmtTime(best.t)} · 第 ${best.wave} 波 · 击毁 ${best.kills}` : '还没有记录 —— 第一次任务就从这里开始'}</p>
+    <p class="sub credit">总局数 ${meta.runs} · 局外信用点 ${meta.credits}</p>
+    <button class="btn" id="menuPlay">开始任务</button>
+    <div class="menu-row">
+      <button class="btn alt" id="menuMeta">研发终端</button>
+      <button class="btn alt" id="menuFb">意见收集</button>
+    </div>
+    <div class="qrow">
+      <span class="qlabel">画质</span>
+      <button class="chip q" data-q="high">高</button>
+      <button class="chip q" data-q="mid">中</button>
+      <button class="chip q" data-q="low">低</button>
+    </div>
+    <p class="sub hint">WASD / 方向键机动 · 自动开火 · B 补给终端 · ESC 暂停 · M 静音</p>`;
+  overlay.classList.add('show');
+  panelMode = 'menu';
+  const el = (id) => document.getElementById(id);
+  el('menuPlay').onclick = () => showShipSelect();
+  el('menuMeta').onclick = () => showMeta();
+  el('menuFb').onclick = () => showFeedback();
+  panel.querySelectorAll('.chip.q').forEach(b => {
+    b.classList.toggle('on', b.dataset.q === qualityLevel);
+    b.onclick = () => { setQuality(b.dataset.q, true); showMainMenu(); };
+  });
+}
+
 function showShipSelect(silent) {
   G.paused = true;
   currentOptions = null;
@@ -1154,7 +1191,8 @@ function showShipSelect(silent) {
     <p class="sub">机体差异只在单局内生效 · 点击或按 1 / 2 / 3</p>
     <div id="cards" class="ships">${cards}</div>
     <button class="btn" id="metaOpen">研发终端 · 局外信用点 ${meta.credits}</button>
-    <button class="btn alt" id="fbShip">意见收集</button>`;
+    <button class="btn alt" id="fbShip">意见收集</button>
+    <button class="btn alt" id="backMenu">返回主界面</button>`;
   overlay.classList.add('show');
   const pick = (id) => {
     shipId = id;
@@ -1169,6 +1207,7 @@ function showShipSelect(silent) {
   panelMode = 'ship';
   document.getElementById('metaOpen').onclick = () => showMeta();
   document.getElementById('fbShip').onclick = () => showFeedback();
+  document.getElementById('backMenu').onclick = () => showMainMenu();
 }
 
 /* ==================== 局内商店（#16） ==================== */
@@ -1715,7 +1754,7 @@ function showMeta() {
       showMeta();
     };
   });
-  document.getElementById('metaBack').onclick = () => showShipSelect(true);
+  document.getElementById('metaBack').onclick = () => showMainMenu();
 }
 
 /* ==================== 武器 ==================== */
@@ -3256,7 +3295,7 @@ loadQuality();
 booted = true;
 syncOrientation();
 /* 首次进入（或刷新后）先选机体：直接把玩家丢进战场会让新玩家不知道自己在开什么 */
-showShipSelect(true);
+showMainMenu();
 
 /* 调试钩子：浏览器控制台里可直接查看/微调状态，不影响游戏运行
    例：__game.player.speed = 420   __game.sim(60)   __game.bot(true) */
