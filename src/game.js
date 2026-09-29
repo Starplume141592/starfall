@@ -1570,20 +1570,47 @@ function rerollShop() {
   return true;
 }
 
-/** 锁定 / 解锁一格：**免费**，跨波保留，且**价格冻结**（免疫随小节上涨）。 */
-function toggleLock(entry) {
+/** 锁定 / 解锁一格：**免费**，跨波保留，且**价格冻结**（免疫随小节上涨）。
+ *
+ *  反馈（2026-09-29 补）：旧实现只改了状态就整块 `showShop()` 重绘 —— 结果是"点了没反应"，
+ *  而且整个货架闪一下。现在改成**局部更新 + 一次性动效**：
+ *  角标回弹（.22s）+ 卡片边框亮起（.18s）+ 状态条数字跟着改，**不动其它卡片**。
+ *  动效只有两个通道（形状 + 颜色），且 220ms 内结束 —— 在反馈预算内。 */
+function toggleLock(entry, cardEl) {
   if (!entry) return;
   const i = G.shopLocks.findIndex(l => l.it.id === entry.it.id);
-  if (i >= 0) {
+  const on = i < 0;                                   // 本次是"锁"还是"解锁"
+  if (!on) {
     G.shopLocks.splice(i, 1);
     audio.hit();
   } else {
-    if (G.shopLocks.length >= RUN.shopLockMax) { audio.hurt(); addText(player.x, player.y - 50, `锁定格已满（${RUN.shopLockMax}）`, PALETTE.enemyBullet, 16); return; }
+    if (G.shopLocks.length >= RUN.shopLockMax) {
+      audio.hurt();
+      if (cardEl) {
+        cardEl.classList.remove('lock-full');
+        void cardEl.offsetWidth;                      // 强制重排：让动画能重播
+        cardEl.classList.add('lock-full');
+        setTimeout(() => cardEl.classList.remove('lock-full'), 320);
+      }
+      addText(player.x, player.y - 50, `锁定格已满（${RUN.shopLockMax}）`, PALETTE.enemyBullet, 16);
+      return;
+    }
     G.shopLocks.push({ it: entry.it, price: entry.price });
     G.shopLocksUsed++;
     audio.levelUp();
   }
-  if (shopOpen) showShop(panel._shopKind);
+  /* 局部更新：只碰这一张卡与状态条，不重绘货架（重绘会让"锁定"看起来像"页面刷新"） */
+  if (cardEl) {
+    cardEl.classList.toggle('locked', on);
+    cardEl.classList.remove('just-locked', 'just-unlocked');
+    void cardEl.offsetWidth;
+    cardEl.classList.add(on ? 'just-locked' : 'just-unlocked');
+    const chip = cardEl.querySelector('.lock');
+    if (chip) chip.textContent = on ? '🔒' : '🔓';
+    setTimeout(() => cardEl.classList.remove('just-locked', 'just-unlocked'), 320);
+  }
+  const info = document.getElementById('shopLockInfo');
+  if (info) info.textContent = `锁定 ${G.shopLocks.length}/${RUN.shopLockMax}`;
 }
 
 /** 商店面板（阶段 A 后半重做）：**网格货架**，为"几十上百件"设计 ——
@@ -1637,7 +1664,7 @@ function showShop(kind) {
   const title = isBig ? '补给终端 · 整备' : '补给终端 · 前哨';
   const beatNow = Math.floor(Math.max(0, G.wave - 1) / RUN.wavePerBeat) + 1;
   const rp = refreshPrice();
-  const sub = `第 ${beatNow} 小节 · 价格随小节上涨 · 锁定 ${G.shopLocks.length}/${RUN.shopLockMax} · 按 B 或 ESC 关闭`;
+  const sub = `第 ${beatNow} 小节 · 价格随小节上涨 · <span id="shopLockInfo">锁定 ${G.shopLocks.length}/${RUN.shopLockMax}</span> · 按 B 或 ESC 关闭`;
   panel.innerHTML = `<h2>${title} // 信用点 ${Math.round(player.credits)}</h2>
     <p class="sub">${sub}</p>
     <div id="shopGrid" class="shop-grid">${rows}</div>
@@ -1653,7 +1680,7 @@ function showShop(kind) {
       const entry = shopStock[idx];
       if (!entry) return;
       /* 点 🔒 只切锁定，不购买（否则"想锁却买到"是必然发生的误操作） */
-      if (ev.target.closest('.lock')) { toggleLock(entry); return; }
+      if (ev.target.closest('.lock')) { toggleLock(entry, el); return; }
       buyItem(entry.it, entry.price);
       if (shopOpen) showShop(kind);       // '数据注入' 会主动关店去弹升级面板
     };
